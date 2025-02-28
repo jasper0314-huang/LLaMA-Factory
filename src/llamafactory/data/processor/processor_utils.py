@@ -35,6 +35,7 @@ class DatasetProcessor(ABC):
     tokenizer: "PreTrainedTokenizer"
     processor: Optional["ProcessorMixin"]
     data_args: "DataArguments"
+    is_eval: bool
 
     @abstractmethod
     def preprocess_dataset(self, examples: Dict[str, List[Any]]) -> Dict[str, List[Any]]:

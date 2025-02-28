@@ -123,6 +123,10 @@ class DataArguments:
             )
         },
     )
+    keep_cols_for_eval: Optional[str] = field(
+        default=None,
+        metadata={"help": "Columns to keep for evaluation. Use commas to separate multiple columns."},
+    )
 
     def __post_init__(self):
         def split_arg(arg):
@@ -132,6 +136,7 @@ class DataArguments:
 
         self.dataset = split_arg(self.dataset)
         self.eval_dataset = split_arg(self.eval_dataset)
+        self.keep_cols_for_eval = split_arg(self.keep_cols_for_eval)
 
         if self.media_dir is None:
             self.media_dir = self.dataset_dir
@@ -161,6 +166,9 @@ class DataArguments:
 
         if self.mask_history and self.train_on_prompt:
             raise ValueError("`mask_history` is incompatible with `train_on_prompt`.")
+
+        if self.keep_cols_for_eval is not None and self.eval_dataset is None:
+            raise ValueError("Cannot specify `keep_cols_for_eval` if `eval_dataset` is None.")
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

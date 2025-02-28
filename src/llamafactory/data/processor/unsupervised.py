@@ -82,6 +82,11 @@ class UnsupervisedDatasetProcessor(DatasetProcessor):
             model_inputs["videos"].append(examples["_videos"][i])
             model_inputs["audios"].append(examples["_audios"][i])
 
+            # save eval keep columns
+            if self.is_eval and self.data_args.keep_cols_for_eval:
+                for keep_key in self.data_args.keep_cols_for_eval:
+                    model_inputs[keep_key].append(examples[keep_key][i])
+
         return model_inputs
 
     def print_data_example(self, example: Dict[str, List[int]]) -> None:
