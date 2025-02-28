@@ -131,7 +131,7 @@ def register_custom_model(cls):
     CUSTOM_MODEL_CLASSES[cls.__name__] = cls
     return cls
 def ensure_custom_models_registered():
-    pass
+    from ..train.vla.vla_models import Qwen2_VL_VLA, Qwen2_5_VL_VLA
 
 
 def load_model(
@@ -224,5 +224,15 @@ def load_model(
     if model_args.print_param_status and int(os.getenv("LOCAL_RANK", "0")) == 0:
         for name, param in model.named_parameters():
             print(f"name: {name}, dtype: {param.dtype}, device: {param.device}, trainable: {param.requires_grad}")
+
+    """
+    Note: transformers==4.49.0 has a bug that the output of rotary_pos_emb must be float32.
+    To avoid error with deepspeed, which cast all parameters to fp16/bf16, we apply a hook to cast the output to fp32.
+    """
+    from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLForConditionalGeneration
+    if isinstance(model, Qwen2_5_VLForConditionalGeneration):
+        def cast_output_to_fp32(module, inputs, output):
+            return output.float()
+        model.visual.rotary_pos_emb.register_forward_hook(cast_output_to_fp32)
 
     return model

@@ -206,7 +206,7 @@ class ModelArguments(QuantizationArguments, ProcessorArguments, ExportArguments,
         metadata={"help": "The specific model version to use (can be a branch name, tag name or commit id)."},
     )
     low_cpu_mem_usage: bool = field(
-        default=True,
+        default=False,
         metadata={"help": "Whether or not to use memory-efficient model loading."},
     )
     rope_scaling: Optional[Literal["linear", "dynamic", "yarn", "llama3"]] = field(

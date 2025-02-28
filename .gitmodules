@@ -1,0 +1,3 @@
+[submodule "src/openvla"]
+	path = src/openvla
+	url = https://github.com/jasper0314-huang/openvla
