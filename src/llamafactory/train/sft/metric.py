@@ -16,6 +16,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, Optional
 
@@ -137,3 +138,70 @@ class ComputeSimilarity:
 
         if compute_result:
             return self._dump()
+
+
+@dataclass
+class ComputeEgoPlanAccuracy:
+    r"""
+    Computes egoplan accuracy and supports `batch_eval_metrics`.
+
+    Wraps the tokenizer into metric functions, used in CustomSeq2SeqTrainer.
+    """
+
+    tokenizer: "PreTrainedTokenizer"
+
+    def _dump(self) -> Optional[Dict[str, float]]:
+        result = None
+        if hasattr(self, "score_dict"):
+            result = {k: float(np.mean(v)) for k, v in self.score_dict.items()}
+
+        self.score_dict = {"egoplan_acc": []}
+        return result
+
+    def __post_init__(self):
+        self._dump()
+
+    def __call__(self, eval_preds: "EvalPrediction", compute_result: bool = True) -> Optional[Dict[str, float]]:
+        preds, labels = numpify(eval_preds.predictions), numpify(eval_preds.label_ids)
+
+        preds = np.where(preds != IGNORE_INDEX, preds, self.tokenizer.pad_token_id)
+        labels = np.where(labels != IGNORE_INDEX, labels, self.tokenizer.pad_token_id)
+
+        decoded_preds = self.tokenizer.batch_decode(preds, skip_special_tokens=True)
+        decoded_labels = self.tokenizer.batch_decode(labels, skip_special_tokens=True)
+
+        for pred, label in zip(decoded_preds, decoded_labels):
+            extraction = self.extract_characters_regex(pred)
+            match = extraction == label[0]  # label: 'A. option'
+            self.score_dict["egoplan_acc"].append(float(match))
+
+        if compute_result:
+            return self._dump()
+
+    @staticmethod
+    def extract_characters_regex(s):
+        # https://github.com/thanku-all/parse_answer/blob/main/eval_your_results.py
+        s = s.strip()
+        answer_prefixes = [
+            "The best answer is",
+            "The correct answer is",
+            "The answer is",
+            "The answer",
+            "The best option is"
+            "The correct option is",
+            "Best answer:"
+            "Best option:",
+            "Answer:",
+            "Option:",
+            "The correct answer",
+            "The correct option",
+        ]
+        for answer_prefix in answer_prefixes:
+            s = s.replace(answer_prefix, "")
+
+        if len(s.split()) > 10 and not re.search("[ABCD]", s):
+            return ""
+        matches = re.search(r'[ABCD]', s)
+        if matches is None:
+            return ""
+        return matches[0]
