@@ -16,6 +16,7 @@
 # limitations under the License.
 
 import json
+import re
 import os
 import sys
 from pathlib import Path
@@ -26,7 +27,7 @@ import transformers
 import yaml
 from transformers import HfArgumentParser
 from transformers.integrations import is_deepspeed_zero3_enabled
-from transformers.trainer_utils import get_last_checkpoint
+from transformers.trainer_utils import PREFIX_CHECKPOINT_DIR
 from transformers.training_args import ParallelMode
 from transformers.utils import is_torch_bf16_gpu_available, is_torch_npu_available
 
@@ -52,6 +53,26 @@ _INFER_ARGS = [ModelArguments, DataArguments, FinetuningArguments, GeneratingArg
 _INFER_CLS = Tuple[ModelArguments, DataArguments, FinetuningArguments, GeneratingArguments]
 _EVAL_ARGS = [ModelArguments, DataArguments, EvaluationArguments, FinetuningArguments]
 _EVAL_CLS = Tuple[ModelArguments, DataArguments, EvaluationArguments, FinetuningArguments]
+
+
+"""
+Extend transformers.trainer_utils.get_last_checkpoint to include path like "checkpoint-last"
+"""
+_re_checkpoint = re.compile(r"^" + PREFIX_CHECKPOINT_DIR + r"\-(\d+|last)$")
+def get_last_checkpoint(folder):
+    content = os.listdir(folder)
+    checkpoints = [
+        path
+        for path in content
+        if _re_checkpoint.search(path) is not None and os.path.isdir(os.path.join(folder, path))
+    ]
+    if len(checkpoints) == 0:
+        return
+    # search for last checkpoint
+    for checkpoint in checkpoints:
+        if checkpoint == f"{PREFIX_CHECKPOINT_DIR}-last":
+            return os.path.join(folder, checkpoint)
+    return os.path.join(folder, max(checkpoints, key=lambda x: int(_re_checkpoint.search(x).groups()[0])))
 
 
 def read_args(args: Optional[Union[Dict[str, Any], List[str]]] = None) -> Union[Dict[str, Any], List[str]]:

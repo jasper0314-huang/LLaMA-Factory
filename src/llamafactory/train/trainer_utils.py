@@ -17,12 +17,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import shutil
+
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
+import torch.distributed as dist
 from transformers import Trainer
+from transformers.trainer import PREFIX_CHECKPOINT_DIR, TRAINER_STATE_NAME, is_torch_xla_available, is_sagemaker_mp_enabled
+from transformers.trainer_callback import ExportableState
+from transformers.training_args import ParallelMode
 from transformers.integrations import is_deepspeed_zero3_enabled
 from transformers.modeling_utils import is_fsdp_enabled
 from transformers.optimization import get_scheduler
@@ -46,8 +53,16 @@ if is_apollo_available():
 
 
 if is_ray_available():
-    from ray.train import RunConfig, ScalingConfig
-    from ray.train.torch import TorchTrainer
+    from ray.train import RunConfig, ScalingConfig  # type: ignore
+    from ray.train.torch import TorchTrainer  # type: ignore
+
+
+if is_torch_xla_available():
+    import torch_xla.core.xla_model as xm # type: ignore
+
+
+if is_sagemaker_mp_enabled():
+    import smdistributed.modelparallel.torch as smp # type: ignore
 
 
 if TYPE_CHECKING:
@@ -625,3 +640,56 @@ def get_ray_trainer(
         ),
     )
     return trainer
+
+
+class SaveLastCheckpointMixin:
+    def save_last_checkpoint(self):
+        # Reference: transformers.trainer.Trainer:_save_checkpoint()
+        checkpoint_folder = f"{PREFIX_CHECKPOINT_DIR}-last"
+        run_dir = self._get_output_dir(trial=None)
+        output_dir = os.path.join(run_dir, checkpoint_folder)
+        tmp_output_dir = output_dir + "_tmp"
+
+        # Save the checkpoint
+        self.save_model(tmp_output_dir, _internal_call=True)
+
+        if not self.args.save_only_model:
+            # Save optimizer and scheduler
+            self._save_optimizer_and_scheduler(tmp_output_dir)
+            self._save_scaler(tmp_output_dir)
+            # Save RNG state
+            self._save_rng_state(tmp_output_dir)
+
+        # Save the Trainer state
+        if self.args.should_save:
+            # Update `ExportableState` callbacks and `TrainerControl` state to where we are currently
+            for cb in [
+                cb for cb in self.callback_handler.callbacks + [self.control] if isinstance(cb, ExportableState)
+            ]:
+                cb_name = cb.__class__.__name__
+                cb_state = cb.state()
+                if isinstance(self.state.stateful_callbacks[cb_name], list):
+                    self.state.stateful_callbacks[cb_name].append(cb_state)
+                else:
+                    self.state.stateful_callbacks[cb_name] = cb_state
+            self.state.save_to_json(os.path.join(tmp_output_dir, TRAINER_STATE_NAME))
+
+        self._wait_for_everyone()
+        # Delete the output_dir and move the tmp_output_dir to output_dir
+        if self.is_world_process_zero():
+            output_dir_old = output_dir + "_deleted"
+            if os.path.exists(output_dir):
+                shutil.move(output_dir, output_dir_old)
+            shutil.move(tmp_output_dir, output_dir)
+            if os.path.exists(output_dir_old):
+                shutil.rmtree(output_dir_old)
+        self._wait_for_everyone()
+
+    def _wait_for_everyone(self):
+        # Reference: transformers.trainer.Trainer:_inner_training_loop
+        if is_torch_xla_available():
+            xm.rendezvous("load_best_model_at_end")
+        elif self.args.parallel_mode == ParallelMode.DISTRIBUTED:
+            dist.barrier()
+        elif is_sagemaker_mp_enabled():
+            smp.barrier()

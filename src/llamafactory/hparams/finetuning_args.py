@@ -441,6 +441,10 @@ class FinetuningArguments(
         default=False,
         metadata={"help": "Whether or not to compute effective tokens per second."},
     )
+    save_last_ckpt_steps: int = field(
+        default=0,
+        metadata={"help": "Save the last checkpoint every n steps."},
+    )
 
     def __post_init__(self):
         def split_arg(arg):

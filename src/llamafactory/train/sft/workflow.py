@@ -26,7 +26,7 @@ from ...model import load_model, load_tokenizer
 from ..trainer_utils import create_modelcard_and_push
 from .metric import ComputeAccuracy, ComputeSimilarity, eval_logit_processor
 from .trainer import CustomSeq2SeqTrainer
-
+from ..callbacks import SaveLastCheckpointCallback
 
 if TYPE_CHECKING:
     from transformers import Seq2SeqTrainingArguments, TrainerCallback
@@ -96,6 +96,9 @@ def run_sft(
         **tokenizer_module,
         **metric_module,
     )
+
+    if finetuning_args.save_last_ckpt_steps > 0:
+        trainer.add_callback(SaveLastCheckpointCallback(trainer, finetuning_args.save_last_ckpt_steps))
 
     # Training
     if training_args.do_train:
