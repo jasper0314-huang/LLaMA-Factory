@@ -36,6 +36,7 @@ from typing_extensions import override
 from ..extras import logging
 from ..extras.constants import TRAINER_LOG, V_HEAD_SAFE_WEIGHTS_NAME, V_HEAD_WEIGHTS_NAME
 from ..extras.misc import get_peak_memory, is_env_enabled, use_ray
+from .trainer_utils import SaveLastCheckpointMixin
 
 
 if is_safetensors_available():
@@ -44,7 +45,7 @@ if is_safetensors_available():
 
 
 if TYPE_CHECKING:
-    from transformers import TrainerControl, TrainerState, TrainingArguments
+    from transformers import TrainerControl, TrainerState, TrainingArguments, Trainer
     from trl import AutoModelForCausalLMWithValueHead
 
     from ..hparams import DataArguments, FinetuningArguments, GeneratingArguments, ModelArguments
@@ -393,3 +394,16 @@ class ReporterCallback(TrainerCallback):
                     "generating_args": self.generating_args.to_dict(),
                 }
             )
+
+
+class SaveLastCheckpointCallback(TrainerCallback):
+    def __init__(self, trainer: "Trainer", save_last_ckpt_steps: int):
+        assert isinstance(trainer, SaveLastCheckpointMixin), "Trainer must inherit from SaveLastCheckpointMixin to use SaveLastCheckpointCallback"
+        self.trainer = trainer
+        self.save_last_ckpt_steps = save_last_ckpt_steps
+
+    def on_step_end(self, args: "TrainingArguments", state: "TrainerState", control: "TrainerControl", **kwargs):
+        if state.global_step % self.save_last_ckpt_steps == 0:
+            logger.info_rank0(f"Saving last checkpoint at step {state.global_step} ...")
+            self.trainer.save_last_checkpoint()
+            logger.info_rank0("Finished saving last checkpoint.")

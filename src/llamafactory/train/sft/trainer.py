@@ -29,7 +29,7 @@ from ...extras import logging
 from ...extras.constants import IGNORE_INDEX
 from ...extras.packages import is_transformers_version_greater_than
 from ..callbacks import SaveProcessorCallback
-from ..trainer_utils import create_custom_optimizer, create_custom_scheduler
+from ..trainer_utils import create_custom_optimizer, create_custom_scheduler, SaveLastCheckpointMixin
 
 
 if TYPE_CHECKING:
@@ -43,7 +43,7 @@ if TYPE_CHECKING:
 logger = logging.get_logger(__name__)
 
 
-class CustomSeq2SeqTrainer(Seq2SeqTrainer):
+class CustomSeq2SeqTrainer(Seq2SeqTrainer, SaveLastCheckpointMixin):
     r"""
     Inherits Seq2SeqTrainer to compute generative metrics such as BLEU and ROUGE.
     """
