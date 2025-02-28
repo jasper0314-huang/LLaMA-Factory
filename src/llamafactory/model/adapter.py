@@ -256,6 +256,36 @@ def _setup_lora_tuning(
     return model
 
 
+def _setup_vla_tuning(
+    model: "PreTrainedModel",
+    finetuning_args: "FinetuningArguments",
+    is_trainable: bool,
+    cast_trainable_params_to_fp32: bool,
+) -> None:
+    if not is_trainable :
+        return
+
+    logger.info_rank0(f"Fine-tuning method: vla.{finetuning_args.vla_tuning_type}")
+    if finetuning_args.vla_tuning_type == "action_model":
+        for name, param in model.named_parameters():
+            if "action_model" in name:
+                if cast_trainable_params_to_fp32:
+                    param.data = param.data.to(torch.float32)
+            else:
+                param.requires_grad_(False)
+    elif finetuning_args.vla_tuning_type == "full":
+        assert not finetuning_args.train_mm_proj_only and finetuning_args.freeze_vision_tower
+        forbidden_modules = get_forbidden_modules(model.config, finetuning_args)
+        for name, param in model.named_parameters():
+            if not any(forbidden_module in name for forbidden_module in forbidden_modules):
+                if cast_trainable_params_to_fp32:
+                    param.data = param.data.to(torch.float32)
+            else:
+                param.requires_grad_(False)
+    else:
+        raise NotImplementedError(f"Unknown vla_tuning type: {finetuning_args.vla_tuning_type}.")
+
+
 def init_adapter(
     config: "PretrainedConfig",
     model: "PreTrainedModel",
@@ -299,6 +329,8 @@ def init_adapter(
         model = _setup_lora_tuning(
             config, model, model_args, finetuning_args, is_trainable, cast_trainable_params_to_fp32
         )
+    elif finetuning_args.finetuning_type == "vla":
+        _setup_vla_tuning(model, finetuning_args, is_trainable, cast_trainable_params_to_fp32)
     else:
         raise NotImplementedError(f"Unknown finetuning type: {finetuning_args.finetuning_type}.")
 
