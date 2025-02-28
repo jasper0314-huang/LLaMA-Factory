@@ -241,6 +241,7 @@ def align_dataset(
     dataset_attr: "DatasetAttr",
     data_args: "DataArguments",
     training_args: "Seq2SeqTrainingArguments",
+    is_eval: bool,
 ) -> Union["Dataset", "IterableDataset"]:
     r"""
     Aligned dataset:
@@ -254,6 +255,12 @@ def align_dataset(
     """
 
     column_names = list(next(iter(dataset)).keys())
+
+    # remove eval keep column from column_names
+    if is_eval and data_args.keep_cols_for_eval:
+        for keep_col in data_args.keep_cols_for_eval:
+            column_names.remove(keep_col)
+
     kwargs = {}
     if not data_args.streaming:
         kwargs = dict(

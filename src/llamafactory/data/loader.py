@@ -54,6 +54,7 @@ def _load_single_dataset(
     model_args: "ModelArguments",
     data_args: "DataArguments",
     training_args: "Seq2SeqTrainingArguments",
+    is_eval: bool,
 ) -> Union["Dataset", "IterableDataset"]:
     r"""
     Loads a single dataset and aligns it to the standard format.
@@ -155,7 +156,7 @@ def _load_single_dataset(
         max_samples = min(data_args.max_samples, len(dataset))
         dataset = dataset.select(range(max_samples))
 
-    return align_dataset(dataset, dataset_attr, data_args, training_args)
+    return align_dataset(dataset, dataset_attr, data_args, training_args, is_eval)
 
 
 def _get_merged_dataset(
@@ -165,6 +166,7 @@ def _get_merged_dataset(
     training_args: "Seq2SeqTrainingArguments",
     stage: Literal["pt", "sft", "rm", "ppo", "kto"],
     merge: bool = True,
+    is_eval: bool = False,
 ) -> Optional[Union["Dataset", "IterableDataset", Dict[str, "Dataset"]]]:
     r"""
     Returns the merged datasets in the standard format.
@@ -177,7 +179,7 @@ def _get_merged_dataset(
         if (stage == "rm" and dataset_attr.ranking is False) or (stage != "rm" and dataset_attr.ranking is True):
             raise ValueError("The dataset is not applicable in the current training stage.")
 
-        datasets[dataset_name] = _load_single_dataset(dataset_attr, model_args, data_args, training_args)
+        datasets[dataset_name] = _load_single_dataset(dataset_attr, model_args, data_args, training_args, is_eval)
 
     if merge:
         return merge_dataset(list(datasets.values()), data_args, seed=training_args.seed)
@@ -192,6 +194,7 @@ def _get_dataset_processor(
     tokenizer: "PreTrainedTokenizer",
     processor: Optional["ProcessorMixin"],
     do_generate: bool = False,
+    is_eval: bool = False,
 ) -> "DatasetProcessor":
     r"""
     Returns the corresponding dataset processor.
@@ -224,7 +227,7 @@ def _get_dataset_processor(
     else:
         dataset_processor_class = UnsupervisedDatasetProcessor
 
-    return dataset_processor_class(template=template, tokenizer=tokenizer, processor=processor, data_args=data_args)
+    return dataset_processor_class(template=template, tokenizer=tokenizer, processor=processor, data_args=data_args, is_eval=is_eval)
 
 
 def _get_preprocessed_dataset(
@@ -244,7 +247,7 @@ def _get_preprocessed_dataset(
         return None
 
     dataset_processor = _get_dataset_processor(
-        data_args, stage, template, tokenizer, processor, do_generate=(training_args.predict_with_generate and is_eval)
+        data_args, stage, template, tokenizer, processor, do_generate=(training_args.predict_with_generate and is_eval), is_eval=is_eval
     )
     column_names = list(next(iter(dataset)).keys())
     kwargs = {}
@@ -318,7 +321,7 @@ def get_dataset(
     with training_args.main_process_first(desc="load dataset"):
         dataset = _get_merged_dataset(data_args.dataset, model_args, data_args, training_args, stage)
         eval_dataset = _get_merged_dataset(
-            data_args.eval_dataset, model_args, data_args, training_args, stage, merge=training_args.do_predict
+            data_args.eval_dataset, model_args, data_args, training_args, stage, merge=training_args.do_predict, is_eval=True
         )
 
     with training_args.main_process_first(desc="pre-process dataset"):
