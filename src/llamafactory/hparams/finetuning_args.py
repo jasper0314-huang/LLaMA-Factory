@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 
 @dataclass
@@ -386,8 +386,57 @@ class SwanLabArguments:
 
 
 @dataclass
+class VLATuningArguments:
+    r"""
+    Arguments pertaining to the VLA training.
+    """
+
+    vla_tuning_type: Literal["full", "action_model"] = field(
+        default="full",
+        metadata={"help": "The type of VLA tuning to use."},
+    )
+    num_parallel_calls: int = field(
+        default=16,
+        metadata={"help": "Number of parallel calls for data loading."},
+    )
+    default_image_resolution: Tuple[int, int] = field(
+        default=(224, 224),
+        metadata={"help": "The default image resolution for image input."},
+    )
+    shuffle_buffer_size: int = field(
+        default=256_000,
+        metadata={"help": "Size of the buffer to randomly sample examples from in dataset streaming."},
+    )
+    image_aug: bool = field(
+        default=False,
+        metadata={"help": "Whether or not to use image augmentation."},
+    )
+    load_all_data_for_training: bool = field(
+        default=True,
+        metadata={"help": "Whether or not to load all data for training."},
+    )
+    repeated_diffusion_steps: int = field(
+        default=8,
+        metadata={"help": "Repeated steps for training action model (a diffusion model)."},
+    )
+    future_action_window_size: int = field(
+        default=15,
+        metadata={"help": "Action chunking, predicting future actions + current action."},
+    )
+    past_action_window_size: int = field(
+        default=0,
+        metadata={"help": "Action history window size."},
+    )
+    action_model_type: Literal["DiT-S", "DiT-B", "DiT-L"] = field(
+        default="DiT-B",
+        metadata={"help": "Action model type"},
+    )
+    action_dim: int = field(default=7, metadata={"help": "Dimension of action space."})
+
+
+@dataclass
 class FinetuningArguments(
-    FreezeArguments, LoraArguments, RLHFArguments, GaloreArguments, ApolloArguments, BAdamArgument, SwanLabArguments
+    FreezeArguments, LoraArguments, RLHFArguments, GaloreArguments, ApolloArguments, BAdamArgument, SwanLabArguments, VLATuningArguments
 ):
     r"""
     Arguments pertaining to which techniques we are going to fine-tuning with.
@@ -401,7 +450,7 @@ class FinetuningArguments(
         default="sft",
         metadata={"help": "Which stage will be performed in training."},
     )
-    finetuning_type: Literal["lora", "freeze", "full"] = field(
+    finetuning_type: Literal["lora", "freeze", "full", "vla"] = field(
         default="lora",
         metadata={"help": "Which fine-tuning method to use."},
     )
@@ -463,7 +512,7 @@ class FinetuningArguments(
         self.freeze_multi_modal_projector = self.freeze_multi_modal_projector and not self.train_mm_proj_only
         self.use_ref_model = self.stage == "dpo" and self.pref_loss not in ["orpo", "simpo"]
 
-        assert self.finetuning_type in ["lora", "freeze", "full"], "Invalid fine-tuning method."
+        assert self.finetuning_type in ["lora", "freeze", "full", "vla"], "Invalid fine-tuning method."
         assert self.ref_model_quantization_bit in [None, 8, 4], "We only accept 4-bit or 8-bit quantization."
         assert self.reward_model_quantization_bit in [None, 8, 4], "We only accept 4-bit or 8-bit quantization."
 
