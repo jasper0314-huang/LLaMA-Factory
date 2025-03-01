@@ -317,6 +317,14 @@ class ModelArguments(QuantizationArguments, ProcessorArguments, ExportArguments,
         init=False,
         metadata={"help": "Whether use block diag attention or not, derived from `neat_packing`. Do not specify it."},
     )
+    custom_model_classname: Optional[str] = field(
+        default=None,
+        metadata={"help": "The class name of the custom model (registered in `loader.py`) to load."},
+    )
+    additional_model_args: Optional[Dict[str, Any]] = field(
+        default=None,
+        metadata={"help": "Additional arguments to pass to the model."},
+    )
 
     def __post_init__(self):
         if self.model_name_or_path is None:
