@@ -113,8 +113,25 @@ def load_config(model_args: "ModelArguments") -> "PretrainedConfig":
     r"""
     Loads model config.
     """
+    ensure_custom_models_registered()
     init_kwargs = _get_init_kwargs(model_args)
-    return AutoConfig.from_pretrained(model_args.model_name_or_path, **init_kwargs)
+    if model_args.additional_model_args is not None:
+        init_kwargs.update(model_args.additional_model_args)
+    # load config
+    config_cls = AutoConfig
+    if model_args.custom_model_classname is not None:
+        config_cls = CUSTOM_MODEL_CLASSES[model_args.custom_model_classname].config_class
+    return config_cls.from_pretrained(model_args.model_name_or_path, **init_kwargs)
+
+"""
+Custom model classes
+"""
+CUSTOM_MODEL_CLASSES: Dict[str, "PreTrainedModel"] = {}
+def register_custom_model(cls):
+    CUSTOM_MODEL_CLASSES[cls.__name__] = cls
+    return cls
+def ensure_custom_models_registered():
+    pass
 
 
 def load_model(
@@ -147,7 +164,9 @@ def load_model(
         if model_args.mixture_of_depths == "load":
             model = load_mod_pretrained_model(**init_kwargs)
         else:
-            if type(config) in AutoModelForVision2Seq._model_mapping.keys():  # assume built-in models
+            if model_args.custom_model_classname is not None:
+                load_class = CUSTOM_MODEL_CLASSES[model_args.custom_model_classname]
+            elif type(config) in AutoModelForVision2Seq._model_mapping.keys():  # assume built-in models
                 load_class = AutoModelForVision2Seq
             elif type(config) in AutoModelForSeq2SeqLM._model_mapping.keys():
                 load_class = AutoModelForSeq2SeqLM
