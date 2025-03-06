@@ -5,7 +5,6 @@ import random
 import subprocess
 import torch.distributed as dist
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
-from typing_extensions import override
 
 from llamafactory.extras import logging
 from llamafactory.train.callbacks import LogCallback, PissaConvertCallback, ReporterCallback, WandbTimerCallback
@@ -15,37 +14,10 @@ from llamafactory.extras.misc import get_device_count
 
 
 if TYPE_CHECKING:
-    from transformers import TrainerCallback, TrainerControl, TrainerState, TrainingArguments
+    from transformers import TrainerCallback
 
 
 logger = logging.get_logger(__name__)
-
-
-class WandbReporterCallback4VLA(ReporterCallback):
-    r"""
-    A callback for reporting training status to wandb.
-    To avoid precision mismatch, we discard the norm_stats.
-    """
-
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-
-    @override
-    def on_train_begin(self, args: "TrainingArguments", state: "TrainerState", control: "TrainerControl", **kwargs):
-        if not state.is_world_process_zero:
-            return
-        if "wandb" in args.report_to:
-            import wandb
-            model_args_dict = self.model_args.to_dict()
-            model_args_dict["additional_model_args"].pop("norm_stats")
-            wandb.config.update(
-                {
-                    "model_args": model_args_dict,
-                    "data_args": self.data_args.to_dict(),
-                    "finetuning_args": self.finetuning_args.to_dict(),
-                    "generating_args": self.generating_args.to_dict(),
-                }
-            )
 
 
 def run(args: Optional[Dict[str, Any]] = None, callbacks: List["TrainerCallback"] = []) -> None:
@@ -60,11 +32,11 @@ def run(args: Optional[Dict[str, Any]] = None, callbacks: List["TrainerCallback"
     if finetuning_args.use_swanlab:
         callbacks.append(get_swanlab_callback(finetuning_args))
 
-    callbacks.append(WandbReporterCallback4VLA(model_args, data_args, finetuning_args, generating_args))  # add to last
+    callbacks.append(ReporterCallback(model_args, data_args, finetuning_args, generating_args))  # add to last
 
-    from llamafactory.train.vla import run_vla_ft  # import here to avoid dist initialized by overwatch
+    from llamafactory.train.action_model import run_action_model_ft  # import here to avoid dist initialized by overwatch
     assert finetuning_args.stage == "sft"
-    run_vla_ft(model_args, data_args, training_args, finetuning_args, callbacks)
+    run_action_model_ft(model_args, data_args, training_args, finetuning_args, callbacks)
 
 
 if __name__ == "__main__":
