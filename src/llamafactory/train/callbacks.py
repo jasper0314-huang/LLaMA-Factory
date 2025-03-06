@@ -396,6 +396,30 @@ class ReporterCallback(TrainerCallback):
             )
 
 
+class WandbTimerCallback(TrainerCallback):
+    r"""
+    A callback for reporting times during training to wandb
+    """
+
+    def on_log(self, args, state, control, model=None, logs=None, **kwargs):
+        import wandb
+        if wandb.run is None:
+            return
+        if not state.is_world_process_zero:
+            return
+        if not hasattr(self, 'prev_time'):
+            self.prev_time = time.time()
+            self.prev_step = state.global_step
+        else:
+            curr_time = time.time()
+            curr_step = state.global_step
+            elapsed_seconds = curr_time - self.prev_time
+            elapsed_steps = curr_step - self.prev_step
+            wandb.log({"train/seconds_per_step": elapsed_seconds / elapsed_steps, "train/global_step": state.global_step})
+            self.prev_time = curr_time
+            self.prev_step = curr_step
+
+
 class SaveLastCheckpointCallback(TrainerCallback):
     def __init__(self, trainer: "Trainer", save_last_ckpt_steps: int):
         assert isinstance(trainer, SaveLastCheckpointMixin), "Trainer must inherit from SaveLastCheckpointMixin to use SaveLastCheckpointCallback"
