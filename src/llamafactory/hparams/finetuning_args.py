@@ -386,19 +386,24 @@ class SwanLabArguments:
 
 
 @dataclass
-class VLATuningArguments:
+class ActionModelArguments:
     r"""
-    Arguments pertaining to the VLA training.
+    All arguments of action model training.
     """
-
+    ##########################
+    #  Fine-tuning arguments #
+    ##########################
     vla_tuning_type: Literal["full", "action_model"] = field(
         default="full",
         metadata={"help": "The type of VLA tuning to use."},
     )
-    num_parallel_calls: int = field(
-        default=16,
-        metadata={"help": "Number of parallel calls for data loading."},
+    image_encoder_lr: float = field(
+        default=None,
+        metadata={"help": "The learning rate for image encoder. If None, use the global learning rate."},
     )
+    ##########################
+    #      Data arguments    #
+    ##########################
     default_image_resolution: Tuple[int, int] = field(
         default=(224, 224),
         metadata={"help": "The default image resolution for image input."},
@@ -415,8 +420,19 @@ class VLATuningArguments:
         default=True,
         metadata={"help": "Whether or not to load all data for training."},
     )
+    num_read_threads: int = field(
+        default=None,
+        metadata={"help": "Total number of threads used for RLDSDataset trajectory read. Assign one thread per dataset if None."},
+    )
+    num_transform_threads: int = field(
+        default=None,
+        metadata={"help": "Total number of threads for RLDSDataset trajectory transform. Assign one thread per dataset if None."},
+    )
+    ##########################
+    # Action model arguments #
+    ##########################
     repeated_diffusion_steps: int = field(
-        default=8,
+        default=4,
         metadata={"help": "Repeated steps for training action model (a diffusion model)."},
     )
     future_action_window_size: int = field(
@@ -432,11 +448,13 @@ class VLATuningArguments:
         metadata={"help": "Action model type"},
     )
     action_dim: int = field(default=7, metadata={"help": "Dimension of action space."})
+    clip_name: str = field(default="openai/clip-vit-large-patch14", metadata={"help": "Name of the CLIP text encoder."})
+    dinov2_name: str = field(default="vit_base_patch14_reg4_dinov2.lvd142m", metadata={"help": "Name of the DINOv2 image encoder."})
 
 
 @dataclass
 class FinetuningArguments(
-    FreezeArguments, LoraArguments, RLHFArguments, GaloreArguments, ApolloArguments, BAdamArgument, SwanLabArguments, VLATuningArguments
+    FreezeArguments, LoraArguments, RLHFArguments, GaloreArguments, ApolloArguments, BAdamArgument, SwanLabArguments, ActionModelArguments
 ):
     r"""
     Arguments pertaining to which techniques we are going to fine-tuning with.

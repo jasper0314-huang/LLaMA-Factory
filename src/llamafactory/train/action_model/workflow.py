@@ -1,20 +1,19 @@
 import json
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, List, Optional, Dict
 from transformers import TrainerCallback
 from pathlib import Path
 
 import torch.distributed as dist
 
-from ...data import get_template_and_fix_tokenizer
-from ...extras.constants import IGNORE_INDEX
 from ...extras.logging import get_logger
 from ...extras.ploting import plot_loss
-from ...model import load_model, load_tokenizer
+from ...extras.misc import count_parameters
 from ..trainer_utils import create_modelcard_and_push
 from ..callbacks import SaveLastCheckpointCallback
 
-from .trainer import ReasoningVLATrainer
-from .data_utils import VLARLDSBatchTransform, VLADataCollator
+from .trainer import ActionModelTrainer
+from .data_utils import ActionModelTransform
+from .models.action_model import ActionModelConfig, ActionModel
 
 from prismatic.vla.datasets import RLDSDataset
 from prismatic.vla.datasets.rlds.utils.data_utils import save_dataset_statistics
@@ -28,21 +27,21 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-def run_vla_ft(
+def run_action_model_ft(
     model_args: "ModelArguments",
     data_args: "DataArguments",
     training_args: "Seq2SeqTrainingArguments",
     finetuning_args: "FinetuningArguments",
     callbacks: Optional[List["TrainerCallback"]] = None,
 ):
-    tokenizer_module = load_tokenizer(model_args)
-    tokenizer = tokenizer_module["tokenizer"]
-    template = get_template_and_fix_tokenizer(tokenizer, data_args)
-
-    batch_transform = VLARLDSBatchTransform(
-        template=template,
-        data_args=data_args,
-        **tokenizer_module,
+    assert training_args.do_train, "Only support training now."
+    batch_transform = ActionModelTransform(
+        finetuning_args=finetuning_args,
+        **ActionModel.get_tokenizer_and_image_transform(
+            finetuning_args.clip_name,
+            finetuning_args.dinov2_name,
+            finetuning_args.default_image_resolution,
+        ),
     )
 
     assert len(data_args.dataset) == 1, "You can only specify a single OXE mix for training"
@@ -57,6 +56,8 @@ def run_vla_ft(
         train=training_args.do_train,
         image_aug=finetuning_args.image_aug,
         load_all_data_for_training=finetuning_args.load_all_data_for_training,
+        num_read_threads=finetuning_args.num_read_threads,
+        num_transform_threads=finetuning_args.num_transform_threads,
     )
 
     # save the dataset statistics
@@ -67,40 +68,18 @@ def run_vla_ft(
     if dist.is_initialized():
         dist.barrier()
 
-    # read dataset_statistics as norm_stats
+    # load model
     with open(run_dir / "dataset_statistics.json", "r") as f:
         norm_stats = json.load(f)
-    additional_model_args = {
-        "action_dim": finetuning_args.action_dim,
-        "action_model_type": finetuning_args.action_model_type,
-        "future_action_window_size": finetuning_args.future_action_window_size,
-        "past_action_window_size": finetuning_args.past_action_window_size,
-        "repeated_diffusion_steps": finetuning_args.repeated_diffusion_steps,
-        "norm_stats": norm_stats,
-    }
-    model_args.additional_model_args = additional_model_args
-    model = load_model(tokenizer, model_args, finetuning_args, training_args.do_train)
-
-    data_collator = VLADataCollator(
-        template=template,
-        model=model,
-        pad_to_multiple_of=8 if training_args.do_train else None,  # for shift short attention
-        label_pad_token_id=IGNORE_INDEX if data_args.ignore_pad_token_for_loss else tokenizer.pad_token_id,
-        **tokenizer_module,
-    )
-
-    # Override the training parameters of VLA Trainer
-    training_args.remove_unused_columns = False  # important for multimodal dataset
+    model = load_model(model_args, finetuning_args, norm_stats)
 
     # Initialize our Trainer
-    trainer = ReasoningVLATrainer(
+    trainer = ActionModelTrainer(
         model=model,
         args=training_args,
         finetuning_args=finetuning_args,
         train_dataset=train_dataset,
-        data_collator=data_collator,
         callbacks=callbacks,
-        **tokenizer_module,
     )
 
     if finetuning_args.save_last_ckpt_steps > 0:
@@ -117,9 +96,43 @@ def run_vla_ft(
         if trainer.is_world_process_zero() and finetuning_args.plot_loss:
             plot_loss(training_args.output_dir, keys=["loss", "eval_loss", "eval_accuracy"])
 
-    # Evaluation
-    if training_args.do_eval or training_args.do_predict:
-        raise NotImplementedError("do_eval and do_predict are not supported for VLA FT")
-
     # Create model card
     create_modelcard_and_push(trainer, model_args, data_args, training_args, finetuning_args)
+
+
+def load_model(
+    model_args: "ModelArguments",
+    finetuning_args: "FinetuningArguments",
+    norm_stats: Dict[str, Dict[str, Dict[str, Dict[str, List[float]]]]],
+):
+    # load model
+    config = ActionModelConfig(
+        action_dim=finetuning_args.action_dim,
+        model_type=finetuning_args.action_model_type,
+        future_action_window_size=finetuning_args.future_action_window_size,
+        past_action_window_size=finetuning_args.past_action_window_size,
+        repeated_diffusion_steps=finetuning_args.repeated_diffusion_steps,
+        img_size=finetuning_args.default_image_resolution,
+        norm_stats=norm_stats,
+    )
+    if model_args.train_from_scratch:
+        model = ActionModel(config)
+    else:
+        model = ActionModel.from_pretrained(
+            config=config,
+            pretrained_model_name_or_path=model_args.model_name_or_path,
+        )
+    model.train()
+    model.text_encoder.eval()
+
+    # set trainable parameters
+    model.text_encoder.requires_grad_(False)
+
+    # print trainable parameters
+    trainable_params, all_param = count_parameters(model)
+    param_stats = "trainable params: {:,} || all params: {:,} || trainable%: {:.4f}".format(
+        trainable_params, all_param, 100 * trainable_params / all_param
+    )
+    logger.info_rank0(param_stats)
+
+    return model

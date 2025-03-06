@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from llamafactory.extras import logging
 from llamafactory.train.sft import run_sft
-from llamafactory.train.callbacks import LogCallback, PissaConvertCallback, ReporterCallback
+from llamafactory.train.callbacks import LogCallback, PissaConvertCallback, ReporterCallback, WandbTimerCallback
 from llamafactory.hparams import get_train_args
 from llamafactory.train.trainer_utils import get_swanlab_callback
 from llamafactory.extras.misc import get_device_count
@@ -23,6 +23,7 @@ logger = logging.get_logger(__name__)
 
 def run(args: Optional[Dict[str, Any]] = None, callbacks: List["TrainerCallback"] = []) -> None:
     callbacks.append(LogCallback())
+    callbacks.append(WandbTimerCallback())
     assert not dist.is_initialized(), "Distributed groups should only be initialized with the TrainingArguments!!"
     model_args, data_args, training_args, finetuning_args, generating_args = get_train_args(args)
 
