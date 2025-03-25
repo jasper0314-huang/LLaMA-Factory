@@ -123,6 +123,10 @@ class DataArguments:
             )
         },
     )
+    dataset_kept_columns: Optional[str] = field(
+        default=None,
+        metadata={"help": "Columns to keep in dataset. Use commas to separate multiple columns."},
+    )
 
     def __post_init__(self):
         def split_arg(arg):
@@ -132,6 +136,7 @@ class DataArguments:
 
         self.dataset = split_arg(self.dataset)
         self.eval_dataset = split_arg(self.eval_dataset)
+        self.dataset_kept_columns = split_arg(self.dataset_kept_columns)
 
         if self.media_dir is None:
             self.media_dir = self.dataset_dir

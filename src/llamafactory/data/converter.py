@@ -254,6 +254,13 @@ def align_dataset(
     """
 
     column_names = list(next(iter(dataset)).keys())
+
+    # remove eval keep column from column_names
+    if data_args.dataset_kept_columns:
+        for keep_col in data_args.dataset_kept_columns:
+            if keep_col in column_names:
+                column_names.remove(keep_col)
+
     kwargs = {}
     if not data_args.streaming:
         kwargs = dict(

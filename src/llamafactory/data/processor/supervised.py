@@ -112,6 +112,12 @@ class SupervisedDatasetProcessor(DatasetProcessor):
             model_inputs["videos"].append(examples["_videos"][i])
             model_inputs["audios"].append(examples["_audios"][i])
 
+            # save keep columns
+            if self.data_args.dataset_kept_columns:
+                for keep_key in self.data_args.dataset_kept_columns:
+                    if keep_key in examples:
+                        model_inputs[keep_key].append(examples[keep_key][i])
+
         return model_inputs
 
     def print_data_example(self, example: Dict[str, List[int]]) -> None:
