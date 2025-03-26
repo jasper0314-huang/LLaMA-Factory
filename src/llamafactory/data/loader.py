@@ -17,7 +17,7 @@ import sys
 from typing import TYPE_CHECKING, Dict, Literal, Optional, Sequence, Union
 
 import numpy as np
-from datasets import DatasetDict, load_dataset, load_from_disk
+from datasets import DatasetDict, load_dataset, load_from_disk, concatenate_datasets
 
 from ..extras import logging
 from ..extras.constants import FILEEXT2TYPE
@@ -316,15 +316,23 @@ def get_dataset(
 
     # Load and preprocess dataset
     with training_args.main_process_first(desc="load dataset"):
-        dataset = _get_merged_dataset(data_args.dataset, model_args, data_args, training_args, stage)
+        datasets = _get_merged_dataset(data_args.dataset, model_args, data_args, training_args, stage, merge=False)
         eval_dataset = _get_merged_dataset(
             data_args.eval_dataset, model_args, data_args, training_args, stage, merge=training_args.do_predict
         )
 
     with training_args.main_process_first(desc="pre-process dataset"):
-        dataset = _get_preprocessed_dataset(
-            dataset, data_args, training_args, stage, template, tokenizer, processor, is_eval=False
-        )
+        datasets = {
+            dataset_name: _get_preprocessed_dataset(
+                dset, data_args, training_args, stage, template, tokenizer, processor, is_eval=False
+            )
+            for dataset_name, dset in datasets.items()
+        }
+        # apply dataset amplify here
+        if data_args.dataset_amplify_ratio is not None:
+            datasets = {name: concatenate_datasets([dset] * ratio) for (name, dset), ratio in zip(datasets.items(), data_args.dataset_amplify_ratio)}
+
+        dataset = merge_dataset(list(datasets.values()), data_args, seed=training_args.seed)
         if isinstance(eval_dataset, dict):
             for eval_name, eval_data in eval_dataset.items():
                 eval_dataset[eval_name] = _get_preprocessed_dataset(

@@ -127,6 +127,10 @@ class DataArguments:
         default=None,
         metadata={"help": "Columns to keep in dataset. Use commas to separate multiple columns."},
     )
+    dataset_amplify_ratio: Optional[str] = field(
+        default=None,
+        metadata={"help": "ratio to amplify the dataset. Use commas to separate multiple datasets."},
+    )
 
     def __post_init__(self):
         def split_arg(arg):
@@ -137,6 +141,7 @@ class DataArguments:
         self.dataset = split_arg(self.dataset)
         self.eval_dataset = split_arg(self.eval_dataset)
         self.dataset_kept_columns = split_arg(self.dataset_kept_columns)
+        self.dataset_amplify_ratio = split_arg(self.dataset_amplify_ratio)
 
         if self.media_dir is None:
             self.media_dir = self.dataset_dir
@@ -166,6 +171,11 @@ class DataArguments:
 
         if self.mask_history and self.train_on_prompt:
             raise ValueError("`mask_history` is incompatible with `train_on_prompt`.")
+
+        if self.dataset_amplify_ratio is not None:
+            if len(self.dataset) != len(self.dataset_amplify_ratio):
+                raise ValueError("The length of dataset and dataset_amplify_ratio should be identical.")
+            self.dataset_amplify_ratio = list(map(int, self.dataset_amplify_ratio))
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
