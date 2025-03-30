@@ -49,6 +49,10 @@ class SFTDataCollatorWithTrace(SFTDataCollatorWith4DAttentionMask):
     kept_columns: List[str] = None
     num_trace_points: int = 16
 
+    def __post_init__(self):
+        trace_tokens = ''.join([f'<trace{i}>' for i in range(self.num_trace_points)])
+        self.trace_token_ids = torch.tensor(self.tokenizer.encode(trace_tokens))
+
     def __call__(self, features: Sequence[Dict[str, Any]]) -> Dict[str, "torch.Tensor"]:
         kept_features = {}
         for kept_col in self.kept_columns:
@@ -58,25 +62,38 @@ class SFTDataCollatorWithTrace(SFTDataCollatorWith4DAttentionMask):
         features.update(kept_features)
 
         # custom handling for future_trace
-        if 'future_trace' in features:
-            future_trace = features.pop('future_trace')
-            # first, replace None with zero tensor
-            future_trace_tensor = [
-                torch.zeros((self.num_trace_points, 2)) if trace is None else torch.tensor(trace)
-                for trace in future_trace
-            ]
-            future_trace_tensor = torch.stack(future_trace_tensor)
-            # create a new key 'future_trace_mask'
-            future_trace_masks = torch.tensor([1 if trace is None else 0 for trace in future_trace], dtype=torch.bool)
-            # find the trace position for each sample
-            trace0_tok_id = self.tokenizer.encode('<trace0>')[0]
-            trace_tokens_begin_indices = (features['input_ids'] == trace0_tok_id).float().argmax(1, keepdim=True)  # [bs, 1], for non-trace samples, index will be 0
-            # add to features
-            features['future_trace_labels'] = future_trace_tensor
-            features['future_trace_masks'] = future_trace_masks
-            features['trace_tokens_begin_indices'] = trace_tokens_begin_indices
+        trace_labels = []
+        trace_masks = []
+        trace_token_indices = []
+        future_trace = features.pop('future_trace')
+        for idx, trace in enumerate(future_trace):
+            if trace is None:
+                trace_labels.append(torch.zeros((self.num_trace_points, 2)))
+                trace_masks.append(1)
+                trace_token_indices.append(torch.zeros(self.num_trace_points))
+            else:
+                trace_labels.append(torch.tensor(trace))
+                trace_masks.append(0)
+                # find the trace token indices for each sample
+                trace_token_indices.append(self._find_trace_token_indices(features['input_ids'][idx]))
+        # add to features
+        features['trace_labels'] = torch.stack(trace_labels)
+        features['trace_masks'] = torch.tensor(trace_masks).to(torch.long)
+        features['trace_token_indices'] = torch.stack(trace_token_indices).to(torch.long)
 
         return features
+
+    def _find_trace_token_indices(self, input_ids: torch.Tensor) -> torch.Tensor:
+        trace_len = self.trace_token_ids.size(0)
+        candidate = (input_ids == self.trace_token_ids[0]).nonzero(as_tuple=False)
+        if candidate.numel() != 1:
+            raise ValueError(f"Trace token {self.trace_token_ids[0]} not found or multiple found in input_ids: {input_ids}")
+        start_index = candidate[0].item()
+        segment = input_ids[start_index:start_index + trace_len]
+        if not torch.equal(segment, self.trace_token_ids):
+            raise ValueError(f"Trace token sequence does not match starting at index {start_index}. Expected: {self.trace_token_ids}, Got: {segment}")
+
+        return torch.arange(start_index, start_index+trace_len)
 
 
 def freeze_tokens_gradients(grad, freeze_mask):

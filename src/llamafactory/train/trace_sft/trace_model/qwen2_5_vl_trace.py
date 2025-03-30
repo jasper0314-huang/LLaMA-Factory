@@ -22,14 +22,12 @@ class Qwen2_5_VL_TraceOutput(Base_TraceOutput, Qwen2_5_VLCausalLMOutputWithPast)
     """
     Output for Qwen2-5 VL Trace model.
     """
-    trace: Optional[torch.Tensor] = None
-    trace_loss: Optional[torch.Tensor] = None
 
 class Qwen2_5_VL_TraceConfig(Base_TraceConfig, Qwen2_5_VLConfig):
     """
     Config for Qwen2-5 VL Trace model.
     """
-    trace_loss_weight: float = 1.0
+
 
 @register_custom_model
 class Qwen2_5_VL_Trace(Qwen2_5_VLForConditionalGeneration):
@@ -63,9 +61,9 @@ class Qwen2_5_VL_Trace(Qwen2_5_VLForConditionalGeneration):
         cache_position: Optional[torch.LongTensor] = None,
         second_per_grid_ts: Optional[torch.Tensor] = None,
         # trace
-        future_trace_labels: Optional[torch.FloatTensor] = None,
-        future_trace_masks: Optional[torch.BoolTensor] = None,
-        trace_tokens_begin_indices: Optional[torch.LongTensor] = None,
+        trace_labels: Optional[torch.FloatTensor] = None,
+        trace_masks: Optional[torch.LongTensor] = None,
+        trace_token_indices: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, Qwen2_5_VL_TraceOutput]:
         r"""
         Override forward to compute trace loss.
@@ -180,20 +178,22 @@ class Qwen2_5_VL_Trace(Qwen2_5_VLForConditionalGeneration):
             # Enable model parallelism
             shift_labels = shift_labels.to(shift_logits.device)
             loss = loss_fct(shift_logits, shift_labels).view(bs, -1).mean(-1)
-            num_non_trace_samples = future_trace_masks.sum().item()
-            loss = loss * future_trace_masks.float()
+            num_non_trace_samples = trace_masks.sum().item()
+            loss = loss * trace_masks.float()
             loss = loss.sum() * (1./num_non_trace_samples if num_non_trace_samples > 0 else 0.)
 
         # predict trace
-        trace_hidden_states = safe_gather_segments(hidden_states, trace_tokens_begin_indices, self.num_trace_points)
+        expanded_trace_token_indices = trace_token_indices.unsqueeze(-1).expand(-1, -1, hidden_states.shape[2])  # [bs, num_points, hidden_size]
+        trace_hidden_states = hidden_states.gather(1, expanded_trace_token_indices)
         traces = self.trace_head(trace_hidden_states)  # [bs, num_trace_points, 2]
-        traces[future_trace_masks] = 0.  # non-trace samples should output (0, 0)
 
         trace_loss = None
-        if future_trace_labels is not None:
-            trace_loss = F.mse_loss(traces.float(), future_trace_labels.float(), reduction='none').mean(-2).mean(-1)  # [bs,]
-            num_trace_samples = (~future_trace_masks).sum().item()
-            trace_loss = trace_loss * (~future_trace_masks).float()
+        if trace_labels is not None:
+            trace_loss = F.mse_loss(traces.float(), trace_labels.float(), reduction='none')  # [bs, num_trace_points, 2]
+            trace_loss = trace_loss.mean(-2).mean(-1)  # [bs,]
+            flipped_trace_masks = 1 - trace_masks
+            num_trace_samples = flipped_trace_masks.sum().item()
+            trace_loss = trace_loss * flipped_trace_masks.float()
             trace_loss = trace_loss.sum() * (1./num_trace_samples if num_trace_samples > 0 else 0.)
             trace_loss = trace_loss * self.trace_loss_weight
             loss = loss + trace_loss
@@ -212,28 +212,3 @@ class Qwen2_5_VL_Trace(Qwen2_5_VLForConditionalGeneration):
             attentions=outputs.attentions,
             rope_deltas=self.rope_deltas,
         )
-
-
-def safe_gather_segments(hidden_states: torch.Tensor, start_indices: torch.Tensor, length: int=16) -> torch.Tensor:
-    """
-    Safely gathers segments of fixed length from each sequence in the batch.
-    Pads with zeros if the segment would go out of bounds.
-
-    Args:
-        hidden_states (torch.Tensor): Tensor of shape [bs, L, D]
-        start_indices (torch.Tensor): Tensor of shape [bs, 1]
-        length (int): Desired segment length (default 16)
-
-    Returns:
-        torch.Tensor: Tensor of shape [bs, length, D]
-    """
-    bs, L, D = hidden_states.shape
-    output = torch.zeros(bs, length, D, device=hidden_states.device, dtype=hidden_states.dtype)
-
-    for b in range(bs):
-        start = start_indices[b].item()
-        end = min(start + length, L)
-        segment = hidden_states[b, start:end]  # shape: [<=length, D]
-        output[b, :end - start] = segment  # pad to length
-
-    return output
