@@ -1200,14 +1200,22 @@ class Qwen2vlPlugin(BasePlugin):
     ) -> Dict[str, "torch.Tensor"]:
         """
         In process_messages, it's too slow to get grid_thw using get_mm_inputs, which reads whole video.
-        We use a fast method to get grid_thw by directly calculating the grid_thw.
-        Reference: transformers/models/qwen2_vl/image_processing_qwen2_vl.py:_preprocess
+        We use a fast method to get grid_thw by only reading first frame of each video.
+        Reference: get_mm_inputs()
         """
-        ret = {}
+        image_processor: "BaseImageProcessor" = getattr(processor, "image_processor", None)
+        video_processor: "BaseImageProcessor" = getattr(processor, "video_processor", image_processor)
+        feature_extractor: "SequenceFeatureExtractor" = getattr(processor, "feature_extractor", None)
+        mm_inputs = {}
+
         if len(images) > 0:
-            # for images, we can use original method
-            image_grid_thw = self._get_mm_inputs(images, [], [], processor)["image_grid_thw"]
-            ret["image_grid_thw"] = image_grid_thw
+            images = self._regularize_images(
+                images,
+                image_max_pixels=getattr(processor, "image_max_pixels", 768 * 768),
+                image_min_pixels=getattr(processor, "image_min_pixels", 32 * 32),
+            )
+            image_grid_thw = image_processor(images, return_tensors="pt")["image_grid_thw"]
+            mm_inputs.update({"image_grid_thw": image_grid_thw})
 
         if len(videos) > 0:
             kwargs_to_regularize = dict(
@@ -1216,32 +1224,22 @@ class Qwen2vlPlugin(BasePlugin):
                 video_fps=getattr(processor, "video_fps", 2.0),
                 video_maxlen=getattr(processor, "video_maxlen", 128),
             )
-            videos_data, num_frames = [], []
+            video_results = []
             for video in videos:
                 container = av.open(video, "r")
                 video_stream = next(stream for stream in container.streams if stream.type == "video")
                 # get the number of video frames
                 sample_indices = self._get_video_sample_indices(video_stream, **kwargs_to_regularize)
-                num_frame = len(sample_indices)
-                if num_frame % 2 != 0:
-                    num_frame += 1
-                num_frames.append(num_frame)
                 # read first frame for latter use
-                frames = []
                 container.seek(0)
-                frames.append(next(container.decode(video_stream)).to_image())
-                frames = self._regularize_images(frames, **kwargs_to_regularize)
-                videos_data.append(frames)
+                image = next(container.decode(video_stream)).to_image()
+                image = self._regularize_images([image], **kwargs_to_regularize)[0]
+                frames = [image] * len(sample_indices)
+                video_results.append(frames)
                 container.close()
-            # use the image_processor to get grid_thw for first frame of each video
-            video_grid_thw = processor.image_processor(
-                images=None, videos=videos_data, return_tensors="pt"
-            )["video_grid_thw"]  # shape: (bs, 3) with 3 being (grid_t, grid_h, grid_w)
-            # now we need to update grid_t based on actual sample frames
-            for idx, num_frame in enumerate(num_frames):
-                video_grid_thw[idx][0] = num_frame // processor.image_processor.temporal_patch_size
-            ret["video_grid_thw"] = video_grid_thw
-        return ret
+            video_grid_thw = video_processor(images=None, videos=video_results, return_tensors="pt")["video_grid_thw"]
+            mm_inputs.update({"video_grid_thw": video_grid_thw})
+        return mm_inputs
 
 
 @dataclass
