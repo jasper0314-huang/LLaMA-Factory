@@ -31,6 +31,7 @@ from ..trainer_utils import create_modelcard_and_push
 from .metric import ComputeAccuracy, ComputeSimilarity, eval_logit_processor, ComputeEgoPlanAccuracy
 from .trainer import CustomSeq2SeqTrainer
 from ..callbacks import SaveLastCheckpointCallback
+from .trace_model import Base_TraceConfig
 
 if TYPE_CHECKING:
     from transformers import Seq2SeqTrainingArguments, TrainerCallback
@@ -114,31 +115,46 @@ def run_trace_sft(
     dataset_module = get_dataset(template, model_args, data_args, training_args, stage="sft", **tokenizer_module)
     model = load_model(tokenizer, model_args, finetuning_args, training_args.do_train)
 
+    is_trace_model = issubclass(model.config_class, Base_TraceConfig)
+
     # freeze the embedding of the original tokens
-    input_embeddings = model.get_input_embeddings()
-    if hasattr(input_embeddings, "num_embeddings"):
-        model_embedding_size = input_embeddings.num_embeddings
-    else:
-        model_embedding_size = input_embeddings.weight.shape[0]
-    freeze_mask = torch.ones(model_embedding_size, dtype=torch.bool)
-    for idx in range(model.num_trace_points):
-        freeze_mask[tokenizer.encode(f'<trace{idx}>')[0]] = False
-    model.get_input_embeddings().weight.register_hook(partial(freeze_tokens_gradients, freeze_mask=freeze_mask))
+    if is_trace_model:
+        input_embeddings = model.get_input_embeddings()
+        if hasattr(input_embeddings, "num_embeddings"):
+            model_embedding_size = input_embeddings.num_embeddings
+        else:
+            model_embedding_size = input_embeddings.weight.shape[0]
+        freeze_mask = torch.ones(model_embedding_size, dtype=torch.bool)
+        for idx in range(model.num_trace_points):
+            freeze_mask[tokenizer.encode(f'<trace{idx}>')[0]] = False
+        model.get_input_embeddings().weight.register_hook(partial(freeze_tokens_gradients, freeze_mask=freeze_mask))
 
     if getattr(model, "is_quantized", False) and not training_args.do_train:
         setattr(model, "_hf_peft_config_loaded", True)  # hack here: make model compatible with prediction
 
-    data_collator = SFTDataCollatorWithTrace(
-        template=template,
-        model=model if not training_args.predict_with_generate else None,
-        pad_to_multiple_of=8 if training_args.do_train else None,  # for shift short attention
-        label_pad_token_id=IGNORE_INDEX if data_args.ignore_pad_token_for_loss else tokenizer.pad_token_id,
-        block_diag_attn=model_args.block_diag_attn,
-        attn_implementation=getattr(model.config, "_attn_implementation", None),
-        compute_dtype=model_args.compute_dtype,
-        **tokenizer_module,
-        kept_columns=data_args.dataset_kept_columns,
-    )
+    if is_trace_model:
+        data_collator = SFTDataCollatorWithTrace(
+            template=template,
+            model=model if not training_args.predict_with_generate else None,
+            pad_to_multiple_of=8 if training_args.do_train else None,  # for shift short attention
+            label_pad_token_id=IGNORE_INDEX if data_args.ignore_pad_token_for_loss else tokenizer.pad_token_id,
+            block_diag_attn=model_args.block_diag_attn,
+            attn_implementation=getattr(model.config, "_attn_implementation", None),
+            compute_dtype=model_args.compute_dtype,
+            **tokenizer_module,
+            kept_columns=data_args.dataset_kept_columns,
+        )
+    else:
+        data_collator = SFTDataCollatorWith4DAttentionMask(
+            template=template,
+            model=model if not training_args.predict_with_generate else None,
+            pad_to_multiple_of=8 if training_args.do_train else None,  # for shift short attention
+            label_pad_token_id=IGNORE_INDEX if data_args.ignore_pad_token_for_loss else tokenizer.pad_token_id,
+            block_diag_attn=model_args.block_diag_attn,
+            attn_implementation=getattr(model.config, "_attn_implementation", None),
+            compute_dtype=model_args.compute_dtype,
+            **tokenizer_module,
+        )
 
     # Override the decoding parameters of Seq2SeqTrainer
     training_args.generation_max_length = training_args.generation_max_length or data_args.cutoff_len

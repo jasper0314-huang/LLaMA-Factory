@@ -132,7 +132,7 @@ def register_custom_model(cls):
     return cls
 def ensure_custom_models_registered():
     from ..train.vla.vla_models import Qwen2_VL_VLA, Qwen2_5_VL_VLA
-    from ..train.trace_sft.trace_model.qwen2_5_vl_trace import Qwen2_5_VL_Trace
+    from ..train.trace_sft.trace_model import Qwen2_5_VL_Trace
 
 def load_model(
     tokenizer: "PreTrainedTokenizer",

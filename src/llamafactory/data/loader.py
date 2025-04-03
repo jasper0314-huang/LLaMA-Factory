@@ -322,17 +322,21 @@ def get_dataset(
         )
 
     with training_args.main_process_first(desc="pre-process dataset"):
-        datasets = {
-            dataset_name: _get_preprocessed_dataset(
-                dset, data_args, training_args, stage, template, tokenizer, processor, is_eval=False
-            )
-            for dataset_name, dset in datasets.items()
-        }
-        # apply dataset amplify here
-        if data_args.dataset_amplify_ratio is not None:
-            datasets = {name: concatenate_datasets([dset] * ratio) for (name, dset), ratio in zip(datasets.items(), data_args.dataset_amplify_ratio)}
+        if datasets is not None:
+            datasets = {
+                dataset_name: _get_preprocessed_dataset(
+                    dset, data_args, training_args, stage, template, tokenizer, processor, is_eval=False
+                )
+                for dataset_name, dset in datasets.items()
+            }
+            # apply dataset amplify here
+            if data_args.dataset_amplify_ratio is not None:
+                datasets = {name: concatenate_datasets([dset] * ratio) for (name, dset), ratio in zip(datasets.items(), data_args.dataset_amplify_ratio)}
 
-        dataset = merge_dataset(list(datasets.values()), data_args, seed=training_args.seed)
+            dataset = merge_dataset(list(datasets.values()), data_args, seed=training_args.seed)
+        else:
+            dataset = None
+
         if isinstance(eval_dataset, dict):
             for eval_name, eval_data in eval_dataset.items():
                 eval_dataset[eval_name] = _get_preprocessed_dataset(
