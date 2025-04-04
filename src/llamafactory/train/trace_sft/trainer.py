@@ -25,6 +25,10 @@ import torch
 from transformers import Seq2SeqTrainer
 from typing_extensions import override
 
+from PIL import Image, ImageDraw
+from pydantic import BaseModel, model_validator, ValidationError
+import ast
+
 from ...extras import logging
 from ...extras.constants import IGNORE_INDEX
 from ...extras.packages import is_transformers_version_greater_than
@@ -124,7 +128,7 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer, SaveLastCheckpointMixin):
         return loss, generated_tokens, labels
 
     def save_predictions(
-        self, dataset: "Dataset", predict_results: "PredictionOutput", skip_special_tokens: bool = True
+        self, dataset: "Dataset", predict_results: "PredictionOutput", skip_special_tokens: bool = True, eval_dataset_names: List[str] = None
     ) -> None:
         r"""
         Saves model predictions to `output_dir`.
@@ -158,3 +162,62 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer, SaveLastCheckpointMixin):
         with open(output_prediction_file, "w", encoding="utf-8") as f:
             for text, pred, label in zip(decoded_inputs, decoded_preds, decoded_labels):
                 f.write(json.dumps({"prompt": text, "predict": pred, "label": label}, ensure_ascii=False) + "\n")
+
+        # visualize trace predictions
+        if len(eval_dataset_names) == 1 and '_trace_tp_' in eval_dataset_names[0]:
+            
+            for pred, label, img_paths in zip(decoded_preds, decoded_labels, dataset['images']):
+                try:
+                    pred_trace = GripperTrace.model_validate(pred.strip()).trace
+                except ValidationError:
+                    pred_trace = []
+                label_trace = GripperTrace.model_validate(label.strip()).trace
+                image = Image.open(img_paths[0])
+                overlay_trace(image, pred_trace, (0,0,255))
+                overlay_trace(image, label_trace, (255,150,0))
+                image.save(os.path.join(self.args.output_dir, 'visualize_trace', f"{img_paths[0].split('/')[-1]}_pred.png"))
+
+
+class GripperTrace(BaseModel):
+    trace: List[Tuple[float, float]]
+
+    @model_validator(mode="before")
+    def parse_answer(cls, values):
+        if isinstance(values, str):
+            try:
+                values = ast.literal_eval(values)
+            except Exception:
+                pass
+            return dict(trace=values)
+        return values
+
+
+def overlay_trace(image: Image.Image, trace: List[Tuple[float, float]], color):
+    """
+    Draws a trace on the given image.
+
+    Args:
+        image (PIL.Image.Image): The image on which to draw.
+        trace (List[Tuple[float, float]]): A list of normalized (x, y) points (values between 0 and 1).
+        color: The color used to draw the trace. Can be a tuple (e.g., (255, 0, 0)) or a string (e.g., "red").
+
+    Returns:
+        PIL.Image.Image: The image with the drawn trace.
+    """
+    # Create a copy of the image to avoid modifying the original.
+    width, height = image.size
+
+    # Convert normalized coordinates to pixel coordinates.
+    pixel_points = [(int(x * width), int(y * height)) for x, y in trace]
+
+    # Initialize drawing context.
+    draw = ImageDraw.Draw(image)
+
+    # Draw the trace: if there are at least two points, draw a line connecting them.
+    if len(pixel_points) >= 2:
+        draw.line(pixel_points, fill=color, width=2)
+    elif len(pixel_points) == 1:
+        # If only one point exists, draw a small dot (circle) at that point.
+        x, y = pixel_points[0]
+        radius = 2
+        draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=color)

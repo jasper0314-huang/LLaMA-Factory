@@ -164,6 +164,7 @@ def run_trace_sft(
     # Metric utils
     metric_module = {}
     if training_args.predict_with_generate:
+        assert len(data_args.eval_dataset) == 1, "Only one dataset is supported for evaluation now"
         if 'egoplan' in data_args.eval_dataset[0]:
             metric_module["compute_metrics"] = ComputeEgoPlanAccuracy(tokenizer=tokenizer)
         else:
@@ -224,7 +225,7 @@ def run_trace_sft(
         predict_results = trainer.predict(dataset_module["eval_dataset"], metric_key_prefix="predict", **gen_kwargs)
         trainer.log_metrics("predict", predict_results.metrics)
         trainer.save_metrics("predict", predict_results.metrics)
-        trainer.save_predictions(dataset_module["eval_dataset"], predict_results, generating_args.skip_special_tokens)
+        trainer.save_predictions(dataset_module["eval_dataset"], predict_results, generating_args.skip_special_tokens, data_args.eval_dataset)
 
     # Create model card
     create_modelcard_and_push(trainer, model_args, data_args, training_args, finetuning_args)
