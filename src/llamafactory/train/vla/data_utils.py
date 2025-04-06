@@ -36,7 +36,6 @@ class VLARLDSBatchTransform:
             tokenizer=self.tokenizer,
             processor=self.processor,
             data_args=self.data_args,
-            is_eval=False,
         )
 
     def __call__(self, rlds_batch: Dict[str, Any]) -> Dict[str, Any]:
