@@ -166,13 +166,14 @@ class DiT(nn.Module):
         nn.init.constant_(self.final_layer.linear.weight, 0)
         nn.init.constant_(self.final_layer.linear.bias, 0)
 
-    def forward(self, x, t, text_features, image_features):
+    def forward(self, x, t, text_features, image_features, addit_cond_embeddings=None):
         """
         Forward pass of DiT.
         x: (N, T, D) tensor of predicting action inputs
         t: (N,) tensor of diffusion timesteps
         text_features: (N, L_T, D) tensor of text features
         image_features: (N, L_I, D) tensor of image features
+        addit_cond_embeddings: (N, L, D) tensor of additional conditioning embeddings
         """
         assert x.shape[1] == self.pred_action_window_size
         x = self.action_proj(x)                                 # (N, T, D)
@@ -181,6 +182,8 @@ class DiT(nn.Module):
         z_image = self.image_proj(image_features)               # (N, L_I, D)
         x = torch.cat((x, t, z_image, z_text), dim=1)           # (N, L', D)
         x = x + self.positional_embedding                       # (N, L', D)
+        if addit_cond_embeddings is not None:
+            x = torch.cat((x, addit_cond_embeddings), dim=1)    # (N, L', D)
         for block in self.blocks:
             x = block(x)                                        # (N, L', D)
         x = self.final_layer(x)                                 # (N, L', out_channels)

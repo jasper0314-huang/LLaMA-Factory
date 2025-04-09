@@ -127,6 +127,7 @@ class ActionModel(PreTrainedModel):
         image_inputs: torch.Tensor,         # [bs, 3, 224, 224]
         actions: torch.Tensor,              # [bs, T, C]
         action_masks: torch.Tensor,         # [bs, T]
+        addit_cond_embeddings: torch.Tensor = None, # [bs, L, 768]
     ):
         # repeat inputs for training multiple steps
         input_ids = input_ids.repeat(self.config.repeated_diffusion_steps, 1)
@@ -134,6 +135,8 @@ class ActionModel(PreTrainedModel):
         image_inputs = image_inputs.repeat(self.config.repeated_diffusion_steps, 1, 1, 1)
         actions = actions.repeat(self.config.repeated_diffusion_steps, 1, 1)
         action_masks = action_masks.repeat(self.config.repeated_diffusion_steps, 1)
+        if addit_cond_embeddings is not None:
+            addit_cond_embeddings = addit_cond_embeddings.repeat(self.config.repeated_diffusion_steps, 1, 1)
 
         # sample random noise and timestep
         noise = torch.randn_like(actions)  # [B, T, C]
@@ -143,7 +146,7 @@ class ActionModel(PreTrainedModel):
         x_t = self.noise_scheduler.add_noise(actions, noise, timestep)
 
         # predict noise from x_t
-        pred = self.model_forward(x_t, timestep, input_ids, attention_mask, image_inputs)
+        pred = self.model_forward(x_t, timestep, input_ids, attention_mask, image_inputs, addit_cond_embeddings)
 
         # decide the denoising target
         if self.noise_scheduler.config.prediction_type == 'epsilon':
@@ -171,6 +174,7 @@ class ActionModel(PreTrainedModel):
         input_ids: torch.Tensor,            # [bs, 77]
         attention_mask: torch.Tensor,       # [bs, 77]
         image_inputs: torch.Tensor,         # [bs, 3, 224, 224]
+        addit_cond_embeddings: torch.Tensor = None, # [bs, L, 768]
     ):
         # get text and image features
         with torch.no_grad():
@@ -179,7 +183,7 @@ class ActionModel(PreTrainedModel):
         image_features = self.qformer(image_features, text_features)  # [bs, 32, 768]
 
         # predict noise from x_t
-        pred = self.net(noised_actions, timestep, text_features, image_features)
+        pred = self.net(noised_actions, timestep, text_features, image_features, addit_cond_embeddings)
         return pred
 
     @staticmethod

@@ -453,8 +453,35 @@ class ActionModelArguments:
 
 
 @dataclass
+class ReasoningArguments:
+    r"""
+    All arguments of reasoning VLA training.
+    """
+    reasoning_vlm_name_or_path: str = field(
+        default=None,
+        metadata={"help": "The name or path of the reasoning VLM model."},
+    )
+    action_model_name_or_path: str = field(
+        default=None,
+        metadata={"help": "The name or path of the action model."},
+    )
+    reasoning_prompt_template: str = field(
+        default=None,
+        metadata={"help": "The prompt template for reasoning VLA training. Must contain instruction_placeholder."},
+    )
+    instruction_placeholder: str = field(
+        default="__INSTRUCTION__",
+        metadata={"help": "The placeholder for the task instruction in the prompt template."},
+    )
+    max_response_length: int = field(
+        default=2048,
+        metadata={"help": "The maximum length of the response (including reasoning + answer)."},
+    )
+
+
+@dataclass
 class FinetuningArguments(
-    FreezeArguments, LoraArguments, RLHFArguments, GaloreArguments, ApolloArguments, BAdamArgument, SwanLabArguments, ActionModelArguments
+    FreezeArguments, LoraArguments, RLHFArguments, GaloreArguments, ApolloArguments, BAdamArgument, SwanLabArguments, ActionModelArguments, ReasoningArguments
 ):
     r"""
     Arguments pertaining to which techniques we are going to fine-tuning with.
@@ -570,6 +597,9 @@ class FinetuningArguments(
 
             if self.pissa_init:
                 raise ValueError("`pissa_init` is only valid for LoRA training.")
+
+        if self.reasoning_prompt_template is not None and self.instruction_placeholder not in self.reasoning_prompt_template:
+            raise ValueError(f"`reasoning_prompt_template` must contain instruction_placeholder: {self.instruction_placeholder}.")
 
     def to_dict(self) -> Dict[str, Any]:
         args = asdict(self)

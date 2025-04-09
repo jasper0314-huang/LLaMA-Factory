@@ -18,7 +18,6 @@ class ActionModelTransform:
     r"""
     Convert rlds data into ActionModel inputs.
     """
-    finetuning_args: "FinetuningArguments"
     tokenizer: "PreTrainedTokenizer"
     transform: "Callable"
 
