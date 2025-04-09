@@ -35,8 +35,7 @@ class ActionModelConfig(PretrainedConfig):
         self,
         action_dim: int = 7,
         model_type: str = 'DiT-B',
-        future_action_window_size: int = 15,
-        past_action_window_size: int = 0,
+        num_actions_chunk: int = 16,
         repeated_diffusion_steps: int = 4,
         noise_schedule: str = 'squaredcos_cap_v2',
         diffusion_steps: int = 100,
@@ -50,8 +49,7 @@ class ActionModelConfig(PretrainedConfig):
     ):
         self.action_dim = action_dim
         self.model_type = model_type
-        self.future_action_window_size = future_action_window_size
-        self.past_action_window_size = past_action_window_size
+        self.num_actions_chunk = num_actions_chunk
         self.repeated_diffusion_steps = repeated_diffusion_steps
         self.noise_schedule = noise_schedule
         self.diffusion_steps = diffusion_steps
@@ -107,15 +105,13 @@ class ActionModel(PreTrainedModel):
             with_film=True,
         )
 
-        self.past_action_window_size = config.past_action_window_size
-        self.future_action_window_size = config.future_action_window_size
+        self.num_actions_chunk = config.num_actions_chunk
         self.net = DiT(
             text_emb_dim=self.text_encoder.config.hidden_size,
             img_emb_dim=self.image_encoder.embed_dim,
             in_channels=self.in_channels,
             class_dropout_prob=0.1,
-            future_action_window_size=self.future_action_window_size,
-            past_action_window_size=self.past_action_window_size,
+            num_actions_chunk=self.num_actions_chunk,
             num_image_tokens=self.config.qformer_tokens,
             **dit_config
         )

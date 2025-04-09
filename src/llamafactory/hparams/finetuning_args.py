@@ -390,9 +390,7 @@ class ActionModelArguments:
     r"""
     All arguments of action model training.
     """
-    ##########################
-    #  Fine-tuning arguments #
-    ##########################
+    # Fine-tuning arguments
     vla_tuning_type: Literal["full", "action_model"] = field(
         default="full",
         metadata={"help": "The type of VLA tuning to use."},
@@ -401,9 +399,7 @@ class ActionModelArguments:
         default=None,
         metadata={"help": "The learning rate for image encoder. If None, use the global learning rate."},
     )
-    ##########################
-    #      Data arguments    #
-    ##########################
+    # Data arguments
     default_image_resolution: Tuple[int, int] = field(
         default=(224, 224),
         metadata={"help": "The default image resolution for image input."},
@@ -416,32 +412,14 @@ class ActionModelArguments:
         default=False,
         metadata={"help": "Whether or not to use image augmentation."},
     )
-    load_all_data_for_training: bool = field(
-        default=True,
-        metadata={"help": "Whether or not to load all data for training."},
-    )
-    num_read_threads: int = field(
-        default=None,
-        metadata={"help": "Total number of threads used for RLDSDataset trajectory read. Assign one thread per dataset if None."},
-    )
-    num_transform_threads: int = field(
-        default=None,
-        metadata={"help": "Total number of threads for RLDSDataset trajectory transform. Assign one thread per dataset if None."},
-    )
-    ##########################
-    # Action model arguments #
-    ##########################
+    # Action model arguments
     repeated_diffusion_steps: int = field(
         default=4,
         metadata={"help": "Repeated steps for training action model (a diffusion model)."},
     )
-    future_action_window_size: int = field(
-        default=15,
-        metadata={"help": "Action chunking, predicting future actions + current action."},
-    )
-    past_action_window_size: int = field(
-        default=0,
-        metadata={"help": "Action history window size."},
+    num_actions_chunk: int = field(
+        default=16,
+        metadata={"help": "Number of actions to predict in each chunk."},
     )
     action_model_type: Literal["DiT-S", "DiT-B", "DiT-L"] = field(
         default="DiT-B",

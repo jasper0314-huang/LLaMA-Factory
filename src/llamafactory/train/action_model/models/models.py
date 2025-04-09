@@ -104,21 +104,16 @@ class DiT(nn.Module):
         class_dropout_prob=0.1,
         text_emb_dim=4096,
         img_emb_dim=4096,
-        future_action_window_size=1,
-        past_action_window_size=0,
+        num_actions_chunk=1,
         num_image_tokens=32,
     ):
         super().__init__()
-
-        assert past_action_window_size == 0, "Error: action_history is not used now"
 
         self.in_channels = in_channels
         self.out_channels = in_channels
         self.class_dropout_prob = class_dropout_prob
         self.num_heads = num_heads
-        self.past_action_window_size = past_action_window_size
-        self.future_action_window_size = future_action_window_size
-        self.pred_action_window_size = future_action_window_size + 1
+        self.pred_action_window_size = num_actions_chunk
 
         self.time_embedder = TimestepEmbedder(hidden_size)
 
