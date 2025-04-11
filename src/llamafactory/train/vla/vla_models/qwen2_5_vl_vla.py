@@ -35,7 +35,6 @@ class Qwen2_5_VL_VLA(Qwen2_5_VLForConditionalGeneration):
         super().__init__(config)
         # action model
         self.action_model = ActionModel(
-            model_type=self.config.action_model_type,
             token_size=self.config.hidden_size,
             in_channels=self.config.action_dim,
             future_action_window_size=self.config.future_action_window_size,

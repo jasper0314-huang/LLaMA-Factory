@@ -413,21 +413,58 @@ class ActionModelArguments:
         metadata={"help": "Whether or not to use image augmentation."},
     )
     # Action model arguments
-    repeated_diffusion_steps: int = field(
-        default=4,
-        metadata={"help": "Repeated steps for training action model (a diffusion model)."},
+    action_dim: int = field(
+        default=7,
+        metadata={"help": "Dimension of action space."},
     )
     num_actions_chunk: int = field(
         default=16,
         metadata={"help": "Number of actions to predict in each chunk."},
     )
-    action_model_type: Literal["DiT-S", "DiT-B", "DiT-L"] = field(
-        default="DiT-B",
-        metadata={"help": "Action model type"},
+    qformer_tokens: int = field(
+        default=32,
+        metadata={"help": "Number of Q-former tokens."},
     )
-    action_dim: int = field(default=7, metadata={"help": "Dimension of action space."})
-    clip_name: str = field(default="openai/clip-vit-large-patch14", metadata={"help": "Name of the CLIP text encoder."})
-    dinov2_name: str = field(default="vit_base_patch14_reg4_dinov2.lvd142m", metadata={"help": "Name of the DINOv2 image encoder."})
+    num_hidden_layers: int = field(
+        default=12,
+        metadata={"help": "Number of hidden layers in the transformer."},
+    )
+    hidden_size: int = field(
+        default=768,
+        metadata={"help": "Hidden size of the transformer layers."},
+    )
+    intermediate_size: int = field(
+        default=2048,
+        metadata={"help": "Size of intermediate feedforward layers."},
+    )
+    repeated_diffusion_steps: int = field(
+        default=4,
+        metadata={"help": "Repeated steps for training action model (a diffusion model)."},
+    )
+    noise_schedule: str = field(
+        default='squaredcos_cap_v2',
+        metadata={"help": "Noise schedule used in the diffusion process."},
+    )
+    diffusion_steps: int = field(
+        default=1000,
+        metadata={"help": "Total number of diffusion steps."},
+    )
+    clip_model_name: str = field(
+        default='openai/clip-vit-large-patch14',
+        metadata={"help": "Name of the CLIP text encoder."},
+    )
+    dinov2_model_name: str = field(
+        default='vit_base_patch14_reg4_dinov2.lvd142m',
+        metadata={"help": "Name of the DINOv2 image encoder."},
+    )
+    noise_prediction_type: str = field(
+        default='epsilon',
+        metadata={"help": "Type of noise prediction."},
+    )
+    use_segment_embeddings: bool = field(
+        default=False,
+        metadata={"help": "Whether or not to use segment embeddings to distinguish between text and image inputs."},
+    )
 
 
 @dataclass

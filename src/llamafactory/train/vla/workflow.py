@@ -72,7 +72,6 @@ def run_vla_ft(
         norm_stats = json.load(f)
     additional_model_args = {
         "action_dim": finetuning_args.action_dim,
-        "action_model_type": finetuning_args.action_model_type,
         "future_action_window_size": finetuning_args.future_action_window_size,
         "past_action_window_size": finetuning_args.past_action_window_size,
         "repeated_diffusion_steps": finetuning_args.repeated_diffusion_steps,

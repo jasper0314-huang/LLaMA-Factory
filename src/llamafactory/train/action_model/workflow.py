@@ -37,8 +37,8 @@ def run_action_model_ft(
     assert training_args.do_train, "Only support training now."
     batch_transform = ActionModelTransform(
         **ActionModel.get_tokenizer_and_image_transform(
-            finetuning_args.clip_name,
-            finetuning_args.dinov2_name,
+            finetuning_args.clip_model_name,
+            finetuning_args.dinov2_model_name,
             finetuning_args.default_image_resolution,
         ),
     )
@@ -103,14 +103,37 @@ def load_model(
     # load model
     config = ActionModelConfig(
         action_dim=finetuning_args.action_dim,
-        model_type=finetuning_args.action_model_type,
         num_actions_chunk=finetuning_args.num_actions_chunk,
+        qformer_tokens=finetuning_args.qformer_tokens,
+        num_hidden_layers=finetuning_args.num_hidden_layers,
+        hidden_size=finetuning_args.hidden_size,
+        intermediate_size=finetuning_args.intermediate_size,
         repeated_diffusion_steps=finetuning_args.repeated_diffusion_steps,
+        noise_schedule=finetuning_args.noise_schedule,
+        diffusion_steps=finetuning_args.diffusion_steps,
+        clip_model_name=finetuning_args.clip_model_name,
+        dinov2_model_name=finetuning_args.dinov2_model_name,
         img_size=finetuning_args.default_image_resolution,
         norm_stats=norm_stats,
+        noise_prediction_type=finetuning_args.noise_prediction_type,
+        use_segment_embeddings=finetuning_args.use_segment_embeddings,
     )
     if model_args.train_from_scratch:
         model = ActionModel(config)
+
+        import os
+        import torch
+        INIT = os.environ.get('INIT')
+        if INIT == "1":
+            ckpt = torch.load('/lustre/fs12/portfolios/nvr/users/chipinh/work/research_VLA/Dita/dit_policy_checkpoint.pth')['parameter']
+            transformer_ckpt = {k.replace('transformer.', ''): v for k, v in ckpt.items() if k.startswith('transformer.')}
+            image_encoder_ckpt = {k.replace('image_tokenizer.tokenizer.', ''): v for k, v in ckpt.items() if k.startswith('image_tokenizer.tokenizer.')}
+            qformer_ckpt = {k.replace('image_tokenizer.qformer.', ''): v for k, v in ckpt.items() if k.startswith('image_tokenizer.qformer.')}
+
+            model.transformer.load_state_dict(transformer_ckpt)
+            model.image_encoder.load_state_dict(image_encoder_ckpt)
+            model.qformer.load_state_dict(qformer_ckpt)
+            logger.info_rank0("################## Loaded DIT policy checkpoint ##################")
     else:
         model = ActionModel.from_pretrained(
             config=config,

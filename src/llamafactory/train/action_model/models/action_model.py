@@ -1,55 +1,53 @@
-# Modified from CogACT (https://github.com/microsoft/CogACT) repo
 import numpy as np
 from PIL import Image
 from typing import Dict, List, Optional
+from enum import Enum
 
 import torch
 from torch import nn
+import torch.nn.functional as F
 import torchvision.transforms as transforms
 from torchvision.transforms.functional import InterpolationMode
 from transformers import PretrainedConfig, PreTrainedModel, AutoTokenizer
+from transformers import LlamaConfig, LlamaForCausalLM
 from transformers.models.clip.modeling_clip import CLIPTextModel
 from timm.models import create_model
 from diffusers import DDPMScheduler, DDIMScheduler
 
-from ....model.loader import register_custom_model
-
-from .models import DiT
-from .qformer import QFormer
-
-# Create model sizes of ActionModels
-def DiT_S():
-    return dict(depth=6, hidden_size=384, num_heads=4)
-def DiT_B():
-    return dict(depth=12, hidden_size=768, num_heads=12)
-def DiT_L():
-    return dict(depth=24, hidden_size=1024, num_heads=16)
-
-# Model size
-DiT_configs = {'DiT-S': DiT_S(), 'DiT-B': DiT_B(), 'DiT-L': DiT_L()}
+from .qformer import QFormer, SinusoidalPosEmb
 
 
-@register_custom_model
+class SEGMENT_TYPE(Enum):
+    IMAGE = 0
+    TEXT = 1
+
+
 class ActionModelConfig(PretrainedConfig):
     def __init__(
         self,
         action_dim: int = 7,
-        model_type: str = 'DiT-B',
         num_actions_chunk: int = 16,
+        qformer_tokens: int = 32,
+        num_hidden_layers: int = 12,
+        hidden_size: int = 768,
+        intermediate_size: int = 2048,
         repeated_diffusion_steps: int = 4,
         noise_schedule: str = 'squaredcos_cap_v2',
-        diffusion_steps: int = 100,
+        diffusion_steps: int = 1000,
         clip_model_name: str = 'openai/clip-vit-large-patch14',
         dinov2_model_name: str = 'vit_base_patch14_reg4_dinov2.lvd142m',
         img_size: int = 224,
         norm_stats: Dict[str, Dict[str, Dict[str, Dict[str, List[float]]]]] = None,
-        qformer_tokens: int = 32,
         noise_prediction_type: str = 'epsilon',
+        use_segment_embeddings: bool = False,
         **kwargs,
     ):
         self.action_dim = action_dim
-        self.model_type = model_type
         self.num_actions_chunk = num_actions_chunk
+        self.qformer_tokens = qformer_tokens
+        self.num_hidden_layers = num_hidden_layers
+        self.hidden_size = hidden_size
+        self.intermediate_size = intermediate_size
         self.repeated_diffusion_steps = repeated_diffusion_steps
         self.noise_schedule = noise_schedule
         self.diffusion_steps = diffusion_steps
@@ -57,8 +55,8 @@ class ActionModelConfig(PretrainedConfig):
         self.dinov2_model_name = dinov2_model_name
         self.img_size = img_size
         self.norm_stats = norm_stats
-        self.qformer_tokens = qformer_tokens
         self.noise_prediction_type = noise_prediction_type
+        self.use_segment_embeddings = use_segment_embeddings
         super().__init__(**kwargs)
 
 
@@ -68,7 +66,6 @@ class ActionModel(PreTrainedModel):
 
     def __init__(self, config: ActionModelConfig):
         super().__init__(config)
-        self.in_channels = config.action_dim
         self.norm_stats = config.norm_stats
 
         self.noise_scheduler = DDPMScheduler(
@@ -76,15 +73,11 @@ class ActionModel(PreTrainedModel):
             beta_schedule=config.noise_schedule,
             prediction_type=config.noise_prediction_type,
         )
-
         self.noise_scheduler_eval = DDIMScheduler(
             num_train_timesteps=config.diffusion_steps,
             beta_schedule=config.noise_schedule,
             prediction_type=config.noise_prediction_type,
         )
-
-        # load DiT config
-        dit_config = DiT_configs[config.model_type]
 
         # load text encoder
         self.text_encoder = CLIPTextModel.from_pretrained(self.config.clip_model_name)
@@ -99,31 +92,53 @@ class ActionModel(PreTrainedModel):
         self.qformer = QFormer(
             num_queries=self.config.qformer_tokens,
             embed_dim=self.image_encoder.embed_dim,
-            cross_dim=self.text_encoder.config.hidden_size,
             num_heads=self.image_encoder.embed_dim // 64,
-            dropout_rate=0.1,
+            mlp_ratio=4,
+            qkv_bias=False,
+            norm_layer=nn.LayerNorm,
+            dropout_rate=0.0,
+            drop_path=0.0,
+            use_checkpoint=False,
             with_film=True,
+            cross_dim=self.text_encoder.config.hidden_size,
         )
 
+        self.action_dim = config.action_dim
         self.num_actions_chunk = config.num_actions_chunk
-        self.net = DiT(
-            text_emb_dim=self.text_encoder.config.hidden_size,
-            img_emb_dim=self.image_encoder.embed_dim,
-            in_channels=self.in_channels,
-            class_dropout_prob=0.1,
-            num_actions_chunk=self.num_actions_chunk,
-            num_image_tokens=self.config.qformer_tokens,
-            **dit_config
+        self.hidden_size = config.hidden_size
+        self.intermediate_size = config.intermediate_size
+        self.num_hidden_layers = config.num_hidden_layers
+        self.transformer = LlamaForCausalLM(
+            LlamaConfig(
+                vocab_size=self.action_dim,
+                hidden_size=self.hidden_size,
+                intermediate_size=self.intermediate_size,
+                num_hidden_layers=self.num_hidden_layers,
+                num_attention_heads=self.hidden_size // 64,
+                attention_dropout=0.1,
+                _flash_attn_2_enabled= True,
+            )
+        )
+        del self.transformer.model.embed_tokens  # will not be used
+        self.time_emb = SinusoidalPosEmb(self.hidden_size)
+
+        self.use_segment_embeddings = config.use_segment_embeddings
+        if self.use_segment_embeddings:
+            self.segment_embeddings = nn.Embedding(2, self.hidden_size)
+
+        # get tokenizer and image transform
+        self.tokenizer, self.image_transform = self.get_tokenizer_and_image_transform(
+            self.config.clip_model_name, self.config.dinov2_model_name, self.config.img_size, ret_dict=False
         )
 
     def forward(
         self, 
-        input_ids: torch.Tensor,            # [bs, 77]
-        attention_mask: torch.Tensor,       # [bs, 77]
-        image_inputs: torch.Tensor,         # [bs, 3, 224, 224]
-        actions: torch.Tensor,              # [bs, T, C]
-        action_masks: torch.Tensor,         # [bs, T]
-        addit_cond_embeddings: torch.Tensor = None, # [bs, L, 768]
+        input_ids: torch.Tensor,                        # [B, 77]
+        attention_mask: torch.Tensor,                   # [B, 77]
+        image_inputs: torch.Tensor,                     # [B, 3, 224, 224]
+        actions: torch.Tensor,                          # [B, T, C]
+        action_masks: torch.Tensor,                     # [B, T]
+        addition_cond_embs: torch.Tensor = None,        # [B, L, 768]
     ):
         # repeat inputs for training multiple steps
         input_ids = input_ids.repeat(self.config.repeated_diffusion_steps, 1)
@@ -131,18 +146,18 @@ class ActionModel(PreTrainedModel):
         image_inputs = image_inputs.repeat(self.config.repeated_diffusion_steps, 1, 1, 1)
         actions = actions.repeat(self.config.repeated_diffusion_steps, 1, 1)
         action_masks = action_masks.repeat(self.config.repeated_diffusion_steps, 1)
-        if addit_cond_embeddings is not None:
-            addit_cond_embeddings = addit_cond_embeddings.repeat(self.config.repeated_diffusion_steps, 1, 1)
+        if addition_cond_embs is not None:
+            addition_cond_embs = addition_cond_embs.repeat(self.config.repeated_diffusion_steps, 1, 1)
 
         # sample random noise and timestep
-        noise = torch.randn_like(actions)  # [B, T, C]
+        noise = torch.randn_like(actions)  # [B', T, C]
         timestep = torch.randint(0, self.noise_scheduler.config.num_train_timesteps, (actions.size(0),), device=actions.device)
 
         # sample x_t from x
         x_t = self.noise_scheduler.add_noise(actions, noise, timestep)
 
         # predict noise from x_t
-        pred = self.model_forward(x_t, timestep, input_ids, attention_mask, image_inputs, addit_cond_embeddings)
+        pred = self.model_forward(x_t, timestep, input_ids, attention_mask, image_inputs, addition_cond_embs)
 
         # decide the denoising target
         if self.noise_scheduler.config.prediction_type == 'epsilon':
@@ -156,31 +171,47 @@ class ActionModel(PreTrainedModel):
 
         assert pred.shape == noise.shape == actions.shape
         # Compute L2 loss
-        batch_loss = ((pred.float() - target.float()) ** 2).mean(-1)  # [B, T]
-        masked_loss = batch_loss * action_masks
-        loss = masked_loss.sum(dim=1) / action_masks.sum(dim=1).clamp(min=1)  # [B]
+        batch_loss = ((pred.float() - target.float()) ** 2).mean(-1)  # [B', T]
+        masked_loss = batch_loss * action_masks  # [B', T]
+        loss = masked_loss.sum(dim=1) / action_masks.sum(dim=1).clamp(min=1e-6)  # [B']
         loss = loss.mean()
 
         return (loss,)
 
     def model_forward(
         self,
-        noised_actions: torch.Tensor,       # [bs, T, C]
-        timestep: torch.Tensor,             # [bs]
-        input_ids: torch.Tensor,            # [bs, 77]
-        attention_mask: torch.Tensor,       # [bs, 77]
-        image_inputs: torch.Tensor,         # [bs, 3, 224, 224]
-        addit_cond_embeddings: torch.Tensor = None, # [bs, L, 768]
-    ):
-        # get text and image features
+        noised_actions: torch.Tensor,             # [B', T, C]
+        timestep: torch.Tensor,                   # [B']
+        input_ids: torch.Tensor,                  # [B', 77]
+        attention_mask: torch.Tensor,             # [B', 77]
+        image_inputs: torch.Tensor,               # [B', 3, 224, 224]
+        addition_cond_embs: torch.Tensor = None,  # [B', L, 768]
+    ) -> torch.Tensor:  # [B', T, C]
+        # text embedding
         with torch.no_grad():
-            text_features = self.text_encoder(input_ids, attention_mask).last_hidden_state  # [bs, 77, 768]
-        image_features = self.image_encoder.forward_features(image_inputs)  # [bs, 261, 768]
-        image_features = self.qformer(image_features, text_features)  # [bs, 32, 768]
+            text_embs = self.text_encoder(input_ids, attention_mask).last_hidden_state  # [B', 77, 768]
+        # image embedding
+        image_embs = self.image_encoder.forward_features(image_inputs)  # [B', 261, 768]
+        image_embs = self.qformer(image_embs, text_embs.mean(dim=1))  # [B', 32, 768]
+        # get timestep embedding and pad noised actions to hidden size
+        timestep_emb = self.time_emb(timestep).unsqueeze(1)  # [B', 1, 768]
+        noised_actions_padded = F.pad(noised_actions, (0, self.hidden_size - noised_actions.shape[2]), mode='constant', value=0)  # [B', T, C] -> [B', T, 768]
 
-        # predict noise from x_t
-        pred = self.net(noised_actions, timestep, text_features, image_features, addit_cond_embeddings)
-        return pred
+        # concat additional condition embeddings
+        if addition_cond_embs is not None:
+            text_embs = torch.cat([addition_cond_embs, text_embs], dim=1)  # [B', L + 77, 768]
+
+        # add segment embeddings
+        if self.use_segment_embeddings:
+            text_embs = text_embs + self.segment_embeddings.weight[SEGMENT_TYPE.TEXT.value]  # [B', 77, 768]
+            image_embs = image_embs + self.segment_embeddings.weight[SEGMENT_TYPE.IMAGE.value]  # [B', 32, 768]
+
+        # concat all embeddings
+        context_embs = torch.cat([text_embs, image_embs, timestep_emb, noised_actions_padded], dim=1)  # [B', 77 + 32 + 1 + T, 768]
+        preds = self.transformer(inputs_embeds=context_embs)[0]  # [B', 77 + 32 + 1 + T, 7]
+
+        denoised_actions = preds[:, -noised_actions.shape[1]:, :]  # [B', T, 7]
+        return denoised_actions
 
     @staticmethod
     def get_tokenizer_and_image_transform(clip_model_name: str, dinov2_model_name: str, img_size: int, ret_dict: bool=True):
@@ -200,7 +231,7 @@ class ActionModel(PreTrainedModel):
         self,
         image: Image,
         instruction: str,
-        num_steps: int = 10,
+        num_steps: int = 20,
         ret_unorm_action: bool = True,
         unnorm_key: Optional[str] = None,
         **kwargs,
@@ -216,20 +247,21 @@ class ActionModel(PreTrainedModel):
 
         @return Unnormalized (continuous) action vector --> end-effector deltas.
         """
-        tokenizer, image_transform = self.get_tokenizer_and_image_transform(
-            self.config.clip_model_name, self.config.dinov2_model_name, self.config.img_size, ret_dict=False)
-        self.noise_scheduler_eval.set_timesteps(num_steps)
+        if self.noise_scheduler_eval.num_inference_steps != num_steps:
+            self.noise_scheduler_eval.set_timesteps(num_inference_steps=num_steps)
 
         # Prepare Inputs
-        text_inputs = tokenizer(text=instruction, return_tensors="pt", max_length=77, padding="max_length", truncation=True)
-        image_inputs = image_transform(image).unsqueeze(0)
+        text_inputs = self.tokenizer(text=instruction, return_tensors="pt", max_length=77, padding="max_length", truncation=True)
+        image_inputs = self.image_transform(image).unsqueeze(0)
 
-        # get dtype and device
-        param = next(self.net.parameters())
-        model_dtype, device = param.dtype, param.device
+        # get and cache dtype and device
+        if not hasattr(self, "predict_action_dtype_device"):
+            param = next(self.parameters())
+            self.predict_action_dtype_device = param.dtype, param.device
+        model_dtype, device = self.predict_action_dtype_device
 
         # Sample random noise
-        samples = torch.randn(1, self.future_action_window_size + 1, self.in_channels, device=device).to(model_dtype)  #[B, T, D]
+        samples = torch.randn(1, self.num_actions_chunk, self.action_dim, device=device).to(model_dtype)  #[1, T, D]
 
         # Start sampling
         for t in self.noise_scheduler_eval.timesteps:
