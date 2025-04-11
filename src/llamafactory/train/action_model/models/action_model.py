@@ -1,7 +1,7 @@
 # Modified from CogACT (https://github.com/microsoft/CogACT) repo
 import numpy as np
 from PIL import Image
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import torch
 from torch import nn
@@ -11,6 +11,7 @@ from transformers import PretrainedConfig, PreTrainedModel, AutoTokenizer
 from transformers.models.clip.modeling_clip import CLIPTextModel
 from timm.models import create_model
 from diffusers import DDPMScheduler, DDIMScheduler
+import tensorflow as tf
 
 from ....model.loader import register_custom_model
 
@@ -41,10 +42,11 @@ class ActionModelConfig(PretrainedConfig):
         diffusion_steps: int = 1000,
         clip_model_name: str = 'openai/clip-vit-large-patch14',
         dinov2_model_name: str = 'vit_base_patch14_reg4_dinov2.lvd142m',
-        img_size: int = 224,
+        img_size: Tuple[int, int] = (224, 224),
         norm_stats: Dict[str, Dict[str, Dict[str, Dict[str, List[float]]]]] = None,
         qformer_tokens: int = 32,
         noise_prediction_type: str = 'epsilon',
+        eval_center_crop: bool = False,
         **kwargs,
     ):
         self.action_dim = action_dim
@@ -55,10 +57,14 @@ class ActionModelConfig(PretrainedConfig):
         self.diffusion_steps = diffusion_steps
         self.clip_model_name = clip_model_name
         self.dinov2_model_name = dinov2_model_name
-        self.img_size = img_size
+        if isinstance(img_size, int):
+            self.img_size = (img_size, img_size)
+        else:
+            self.img_size = img_size
         self.norm_stats = norm_stats
         self.qformer_tokens = qformer_tokens
         self.noise_prediction_type = noise_prediction_type
+        self.eval_center_crop = eval_center_crop
         super().__init__(**kwargs)
 
 
@@ -188,7 +194,7 @@ class ActionModel(PreTrainedModel):
         return pred
 
     @staticmethod
-    def get_tokenizer_and_image_transform(clip_model_name: str, dinov2_model_name: str, img_size: int, ret_dict: bool=True):
+    def get_tokenizer_and_image_transform(clip_model_name: str, dinov2_model_name: str, img_size: Tuple[int, int], ret_dict: bool=True):
         transform = transforms.Compose([
             transforms.Resize(size=img_size, interpolation=InterpolationMode.BICUBIC, max_size=None, antialias=True),
             transforms.CenterCrop(size=img_size),
@@ -226,6 +232,8 @@ class ActionModel(PreTrainedModel):
 
         # Prepare Inputs
         text_inputs = self.tokenizer(text=instruction, return_tensors="pt", max_length=77, padding="max_length", truncation=True)
+        if self.config.eval_center_crop:
+            image = self.center_crop_image(image)
         image_inputs = self.image_transform(image).unsqueeze(0)
 
         # get and cache dtype and device
@@ -291,3 +299,63 @@ class ActionModel(PreTrainedModel):
         """Dimensionality of the policy's action space."""
         unnorm_key = self._check_unnorm_key(self.norm_stats, unnorm_key)
         return self.norm_stats[unnorm_key]["action"]
+
+    def center_crop_image(self, image: Image) -> Image.Image:
+        """
+        Center crop an image following OpenVLA.
+        """
+        batch_size = 1
+        crop_scale = 0.9
+
+        image = tf.convert_to_tensor(np.array(image))
+
+        orig_dtype = image.dtype
+
+        # Convert to float32 in range [0,1]
+        image = tf.image.convert_image_dtype(image, tf.float32)
+
+        # Apply center crop and resize
+        image = self.crop_and_resize(image, crop_scale, batch_size)
+
+        # Convert back to original data type
+        image = tf.clip_by_value(image, 0, 1)
+        image = tf.image.convert_image_dtype(image, orig_dtype, saturate=True)
+
+        # Convert to PIL Image
+        return Image.fromarray(image.numpy()).convert("RGB")
+
+    def crop_and_resize(self, image: tf.Tensor, crop_scale: float, batch_size: int) -> tf.Tensor:
+        # Handle 3D inputs by adding batch dimension if needed
+        assert image.shape.ndims in (3, 4), "Image must be 3D or 4D tensor"
+        expanded_dims = False
+        if image.shape.ndims == 3:
+            image = tf.expand_dims(image, axis=0)
+            expanded_dims = True
+
+        # Calculate crop dimensions (note: we use sqrt(crop_scale) for h/w)
+        new_heights = tf.reshape(tf.clip_by_value(tf.sqrt(crop_scale), 0, 1), shape=(batch_size,))
+        new_widths = tf.reshape(tf.clip_by_value(tf.sqrt(crop_scale), 0, 1), shape=(batch_size,))
+
+        # Create bounding box for the crop
+        height_offsets = (1 - new_heights) / 2
+        width_offsets = (1 - new_widths) / 2
+        bounding_boxes = tf.stack(
+            [
+                height_offsets,
+                width_offsets,
+                height_offsets + new_heights,
+                width_offsets + new_widths,
+            ],
+            axis=1,
+        )
+
+        # Apply crop and resize
+        image = tf.image.crop_and_resize(
+            image, bounding_boxes, tf.range(batch_size), self.config.img_size,
+        )
+
+        # Remove batch dimension if it was added
+        if expanded_dims:
+            image = image[0]
+
+        return image

@@ -108,6 +108,7 @@ def load_model(
         repeated_diffusion_steps=finetuning_args.repeated_diffusion_steps,
         img_size=finetuning_args.default_image_resolution,
         norm_stats=norm_stats,
+        eval_center_crop=finetuning_args.image_aug,  # if image_aug is True, we use center crop during evaluation
     )
     if model_args.train_from_scratch:
         model = ActionModel(config)
