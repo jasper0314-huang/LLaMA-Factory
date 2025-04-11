@@ -36,7 +36,6 @@ def run_action_model_ft(
 ):
     assert training_args.do_train, "Only support training now."
     batch_transform = ActionModelTransform(
-        finetuning_args=finetuning_args,
         **ActionModel.get_tokenizer_and_image_transform(
             finetuning_args.clip_name,
             finetuning_args.dinov2_name,
@@ -51,13 +50,9 @@ def run_action_model_ft(
         batch_transform,
         resize_resolution=finetuning_args.default_image_resolution,
         shuffle_buffer_size=finetuning_args.shuffle_buffer_size,
-        future_action_window_size=finetuning_args.future_action_window_size,
-        past_action_window_size=finetuning_args.past_action_window_size,
         train=training_args.do_train,
         image_aug=finetuning_args.image_aug,
-        load_all_data_for_training=finetuning_args.load_all_data_for_training,
-        num_read_threads=finetuning_args.num_read_threads,
-        num_transform_threads=finetuning_args.num_transform_threads,
+        num_actions_chunk=finetuning_args.num_actions_chunk,
     )
 
     # save the dataset statistics
@@ -108,9 +103,8 @@ def load_model(
     # load model
     config = ActionModelConfig(
         action_dim=finetuning_args.action_dim,
-        model_type=finetuning_args.action_model_type,
-        future_action_window_size=finetuning_args.future_action_window_size,
-        past_action_window_size=finetuning_args.past_action_window_size,
+        action_model_type=finetuning_args.action_model_type,
+        num_actions_chunk=finetuning_args.num_actions_chunk,
         repeated_diffusion_steps=finetuning_args.repeated_diffusion_steps,
         img_size=finetuning_args.default_image_resolution,
         norm_stats=norm_stats,

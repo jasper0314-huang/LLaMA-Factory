@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, Any, List, Callable
+from typing import TYPE_CHECKING, Dict, Any, Callable
 from PIL import Image
 
 import torch
@@ -29,10 +29,7 @@ class ActionModelTransform:
         lang = rlds_batch["task"]["language_instruction"].decode().lower()
 
         action = torch.tensor(action, dtype=torch.float32)
-        if "action_mask" in rlds_batch:
-            action_mask = torch.tensor(rlds_batch["action_mask"], dtype=torch.bool)
-        else:
-            action_mask = torch.ones(action.shape[:-1], dtype=torch.bool)
+        action_mask = torch.tensor(rlds_batch["action_mask"], dtype=torch.bool)
 
         # prepare action model text and image inputs
         text_inputs = self.tokenizer(text=lang, return_tensors="pt", max_length=77, padding="max_length", truncation=True)
